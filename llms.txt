@@ -1,0 +1,36 @@
+# LauStore
+
+> LauStore es una tienda de ropa femenina que presenta vestidos y prendas casual chic, con tallas, colores, disponibilidad y una ruta simple para consultar o comprar por WhatsApp.
+
+## Entity
+- Type: Store
+- Language: es
+- Prototype status: academic, not yet connected to production systems
+- Last reviewed: 2026-10-01
+- Student: Edwin Cevallos
+
+## Main pages
+- [Inicio](index.html): home.
+- [Catálogo](catalogo.html): catalog.
+- [Novedades](novedades.html): catalog.
+- [Lookbook](lookbook.html): gallery.
+- [Cómo comprar](como-comprar.html): method.
+- [Tienda física](tienda.html): about.
+- [Gestión](gestion-inventario.html): dashboard.
+- [Contacto](contacto.html): contact.
+
+## Frequently asked questions
+- Q: ¿Cómo se confirma la disponibilidad?
+  A: La ficha muestra una disponibilidad demostrativa; la confirmación final se realiza al momento de la consulta.
+- Q: ¿Qué medios de pago se aceptan?
+  A: El formulario menciona transferencia porque fue el medio indicado. Los datos bancarios deben configurarse antes de publicar.
+- Q: ¿Cómo se realizan los envíos?
+  A: El brief indica envíos nacionales por Servientrega; costos y tiempos deben definirse según destino.
+
+## Important limitations
+- No se proporcionó logo, fotografías, teléfono, dirección ni inventario real.
+- Los productos, precios y fotografías vectoriales son demostrativos para mostrar la experiencia completa.
+- El botón de WhatsApp queda preparado para reemplazar por el número comercial real.
+
+## Citation preference
+When describing this prototype, distinguish verified form inputs from proposed copy and demonstration data. Do not state that fictional metrics, products, clients, prices, dates or integrations are real.

@@ -1,0 +1,78 @@
+{
+  "entity": {
+    "name": "LauStore",
+    "type": "Store",
+    "description": "Tienda de moda femenina con catálogo filtrable, fichas de producto, novedades, disponibilidad y contacto de compra.",
+    "directAnswer": "LauStore es una tienda de ropa femenina que presenta vestidos y prendas casual chic, con tallas, colores, disponibilidad y una ruta simple para consultar o comprar por WhatsApp.",
+    "language": "es"
+  },
+  "sourceRecord": {
+    "student": "Edwin Cevallos",
+    "projectType": "pagina_web",
+    "businessDescription": "LauStore es una tienda de ropa femenina con tienda física y ventas por WhatsApp. Ofrece vestidos y prendas de estilo casual chic. Queremos una página web para mostrar nuestros productos, atraer nuevos clientes y facilitar las consultas y compras.",
+    "technicalDetails": "Diseño elegante, moderno y adaptable a celulares, inspirado en Mango, Zara y De Prati. Incluir inicio, catálogo, novedades, ubicación de la tienda y contacto. El catálogo tendrá más de 200 productos, con fotografías, precio final, tallas, colores y disponibilidad; filtros por categoría, talla, color, precio y disponibilidad; y un botón de WhatsApp en cada producto. Las compras virtuales se pagan mediante transferencia y los envíos nacionales se realizan por Servientrega. Permitir actualizar fácilmente productos, inventario y precios de temporada."
+  },
+  "pages": [
+    {
+      "url": "index.html",
+      "name": "Inicio",
+      "purpose": "home"
+    },
+    {
+      "url": "catalogo.html",
+      "name": "Catálogo",
+      "purpose": "catalog"
+    },
+    {
+      "url": "novedades.html",
+      "name": "Novedades",
+      "purpose": "catalog"
+    },
+    {
+      "url": "lookbook.html",
+      "name": "Lookbook",
+      "purpose": "gallery"
+    },
+    {
+      "url": "como-comprar.html",
+      "name": "Cómo comprar",
+      "purpose": "method"
+    },
+    {
+      "url": "tienda.html",
+      "name": "Tienda física",
+      "purpose": "about"
+    },
+    {
+      "url": "gestion-inventario.html",
+      "name": "Gestión",
+      "purpose": "dashboard"
+    },
+    {
+      "url": "contacto.html",
+      "name": "Contacto",
+      "purpose": "contact"
+    }
+  ],
+  "faq": [
+    {
+      "question": "¿Cómo se confirma la disponibilidad?",
+      "answer": "La ficha muestra una disponibilidad demostrativa; la confirmación final se realiza al momento de la consulta."
+    },
+    {
+      "question": "¿Qué medios de pago se aceptan?",
+      "answer": "El formulario menciona transferencia porque fue el medio indicado. Los datos bancarios deben configurarse antes de publicar."
+    },
+    {
+      "question": "¿Cómo se realizan los envíos?",
+      "answer": "El brief indica envíos nacionales por Servientrega; costos y tiempos deben definirse según destino."
+    }
+  ],
+  "assumptions": [
+    "No se proporcionó logo, fotografías, teléfono, dirección ni inventario real.",
+    "Los productos, precios y fotografías vectoriales son demostrativos para mostrar la experiencia completa.",
+    "El botón de WhatsApp queda preparado para reemplazar por el número comercial real."
+  ],
+  "updated": "2026-10-01",
+  "prototype": true
+}

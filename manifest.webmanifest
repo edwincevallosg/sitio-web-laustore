@@ -1,0 +1,17 @@
+{
+  "name": "LauStore",
+  "short_name": "LS",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f7f5f1",
+  "theme_color": "#111111",
+  "lang": "es",
+  "icons": [
+    {
+      "src": "assets/img/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

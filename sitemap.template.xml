@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>{{BASE_URL}}/index.html</loc><lastmod>2026-10-01</lastmod></url>
+  <url><loc>{{BASE_URL}}/catalogo.html</loc><lastmod>2026-10-01</lastmod></url>
+  <url><loc>{{BASE_URL}}/novedades.html</loc><lastmod>2026-10-01</lastmod></url>
+  <url><loc>{{BASE_URL}}/lookbook.html</loc><lastmod>2026-10-01</lastmod></url>
+  <url><loc>{{BASE_URL}}/como-comprar.html</loc><lastmod>2026-10-01</lastmod></url>
+  <url><loc>{{BASE_URL}}/tienda.html</loc><lastmod>2026-10-01</lastmod></url>
+  <url><loc>{{BASE_URL}}/gestion-inventario.html</loc><lastmod>2026-10-01</lastmod></url>
+  <url><loc>{{BASE_URL}}/contacto.html</loc><lastmod>2026-10-01</lastmod></url>
+  <url><loc>{{BASE_URL}}/privacidad.html</loc><lastmod>2026-10-01</lastmod></url>
+  <url><loc>{{BASE_URL}}/accesibilidad.html</loc><lastmod>2026-10-01</lastmod></url>
+</urlset>

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+      <title id="title">Logo provisional de LauStore</title><desc id="desc">Símbolo original creado para el prototipo.</desc>
+      <rect x="2" y="2" width="92" height="92" rx="0" fill="#111111"/>
+      <g color="#ffffff" transform="translate(0 0)"><path d="M48 16C41 18 38 25 42 31L28 69C39 78 57 78 68 69L54 31C58 25 55 18 48 16Z" fill="none" stroke="currentColor" stroke-width="4"/><path d="M36 46H60" stroke="currentColor" stroke-width="4"/></g>
+    </svg>

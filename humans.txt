@@ -1,0 +1,9 @@
+/* TEAM */
+Student: Edwin Cevallos
+Prototype direction: Centro Iberoamericano
+
+/* SITE */
+Language: Spanish
+Last update: 2026-10-01
+Standards: semantic HTML, responsive CSS, progressive enhancement
+Status: academic prototype

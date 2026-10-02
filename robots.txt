@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+# Ejecute: python set-domain.py https://su-dominio.com para añadir el sitemap absoluto.
