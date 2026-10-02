@@ -8,6 +8,74 @@
     window.__toastTimer = window.setTimeout(() => el.classList.remove('show'), 3600);
   };
 
+  // WhatsApp solo para páginas de acceso público.
+  const currentPage = window.location.pathname.split('/').pop() || 'index.html';
+  const nonPublicPages = new Set(['gestion-inventario.html']);
+
+  if (!nonPublicPages.has(currentPage)) {
+    const whatsappStyle = document.createElement('style');
+    whatsappStyle.textContent = `
+      .whatsapp-float {
+        position: fixed;
+        right: 22px;
+        bottom: 22px;
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #25D366;
+        color: #fff;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, .22);
+        z-index: 9999;
+        transition: transform .2s ease, box-shadow .2s ease;
+      }
+      .whatsapp-float:hover,
+      .whatsapp-float:focus-visible {
+        transform: translateY(-3px) scale(1.04);
+        box-shadow: 0 12px 30px rgba(0, 0, 0, .28);
+      }
+      .whatsapp-float:focus-visible {
+        outline: 3px solid #111;
+        outline-offset: 3px;
+      }
+      .whatsapp-float svg {
+        width: 32px;
+        height: 32px;
+        fill: currentColor;
+      }
+      @media (max-width: 640px) {
+        .whatsapp-float {
+          right: 16px;
+          bottom: 16px;
+          width: 56px;
+          height: 56px;
+        }
+        .whatsapp-float svg {
+          width: 30px;
+          height: 30px;
+        }
+      }
+    `;
+    document.head.appendChild(whatsappStyle);
+
+    const whatsappButton = document.createElement('a');
+    whatsappButton.className = 'whatsapp-float';
+    whatsappButton.href = 'https://wa.me/593983894681';
+    whatsappButton.target = '_blank';
+    whatsappButton.rel = 'noopener noreferrer';
+    whatsappButton.setAttribute('aria-label', 'Contactar a LauStore por WhatsApp');
+    whatsappButton.title = 'Escríbenos por WhatsApp';
+    whatsappButton.innerHTML = `
+      <svg viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+        <path d="M19.11 17.21c-.27-.14-1.62-.8-1.87-.89-.25-.09-.43-.14-.61.14-.18.27-.7.89-.86 1.07-.16.18-.32.2-.59.07-.27-.14-1.15-.42-2.19-1.35-.81-.72-1.36-1.61-1.52-1.88-.16-.27-.02-.42.12-.55.12-.12.27-.32.41-.48.14-.16.18-.27.27-.45.09-.18.05-.34-.02-.48-.07-.14-.61-1.48-.84-2.03-.22-.53-.45-.46-.61-.47h-.52c-.18 0-.48.07-.73.34-.25.27-.96.94-.96 2.3 0 1.35.98 2.66 1.12 2.84.14.18 1.93 2.94 4.68 4.13.65.28 1.16.45 1.56.58.66.21 1.25.18 1.72.11.52-.08 1.62-.66 1.85-1.3.23-.64.23-1.19.16-1.3-.07-.11-.25-.18-.52-.32Z"/>
+        <path d="M16.03 3.2c-7.08 0-12.84 5.72-12.84 12.76 0 2.25.59 4.45 1.71 6.39L3.08 29l6.82-1.79a12.9 12.9 0 0 0 6.13 1.56h.01c7.08 0 12.84-5.72 12.84-12.76 0-3.41-1.34-6.62-3.76-9.03A12.8 12.8 0 0 0 16.03 3.2Zm0 23.42h-.01a10.72 10.72 0 0 1-5.46-1.49l-.39-.23-4.05 1.06 1.08-3.94-.26-.4a10.58 10.58 0 0 1-1.64-5.66c0-5.87 4.81-10.64 10.73-10.64 2.87 0 5.56 1.11 7.59 3.13a10.54 10.54 0 0 1 3.14 7.51c0 5.87-4.81 10.65-10.73 10.65Z"/>
+      </svg>
+    `;
+    document.body.appendChild(whatsappButton);
+  }
+
   const menu = $('#site-nav');
   $('#menu-toggle')?.addEventListener('click', (e) => {
     const open = menu?.classList.toggle('open');
