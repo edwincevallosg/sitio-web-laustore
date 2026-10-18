@@ -1,0 +1,21 @@
+{
+  "name": "laustore-ecommerce-and-inventory",
+  "version": "1.0.0",
+  "description": "LauStore Boutique E-Commerce y Portal de Inventario con IA",
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "serve": "python -m http.server 8080"
+  },
+  "keywords": [
+    "laustore",
+    "inventory",
+    "gemini",
+    "google-sheets",
+    "google-drive"
+  ],
+  "author": "LauStore",
+  "license": "ISC"
+}
