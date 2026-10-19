@@ -368,7 +368,7 @@
         dom.recordTimer.textContent = `${mins}:${secs}`;
 
         // Capturas breves para evitar que Gemini exceda el tiempo de Netlify
-        if (state.recordSeconds >= 20) {
+        if (state.recordSeconds >= 60) {
           stopVoiceRecording();
         }
       }, 1000);
@@ -442,7 +442,7 @@
       try { data = JSON.parse(rawResponse); } catch (_) { /* respuesta no JSON */ }
       if (!res.ok || !data || !data.success) {
         if (res.status === 504 || res.status === 502) {
-          throw new Error("El servicio de análisis tardó demasiado (HTTP " + res.status + "). Graba máximo 20 segundos e inténtalo de nuevo.");
+          throw new Error("El servicio de análisis tardó demasiado (HTTP " + res.status + "). Puedes volver a intentarlo con un dictado más breve.");
         }
         throw new Error((data && data.error) || "No se recibió una respuesta válida del análisis. HTTP " + res.status);
       }
@@ -456,7 +456,7 @@
 
     } catch (err) {
       const errorMessage = err.name === "AbortError"
-        ? "La solicitud tardó demasiado en responder. Graba máximo 20 segundos y vuelve a intentarlo."
+        ? "La solicitud tardó demasiado en responder. Puedes volver a intentarlo con un dictado más breve."
         : (err.message || "No se pudo completar el análisis.");
       alert(`⚠️ ${errorMessage}\n\nPuedes llenar los campos manualmente a continuación.`);
       populateConfirmationForm({});
