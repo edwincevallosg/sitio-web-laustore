@@ -64,7 +64,7 @@ exports.handler = async (event) => {
     const parts = [];
 
     // Parte de imagen
-    const cleanImageBase64 = imageBase64.replace(/^data:image\/[a-z]+;base64,/, "");
+    const cleanImageBase64 = imageBase64.replace(/^data:[^,]+;base64,/i, "");
     parts.push({
       inline_data: {
         mime_type: imageMimeType || "image/jpeg",
@@ -74,7 +74,7 @@ exports.handler = async (event) => {
 
     // Parte de audio (si fue grabado)
     if (audioBase64) {
-      const cleanAudioBase64 = audioBase64.replace(/^data:audio\/[a-z0-9_-]+;base64,/, "");
+      const cleanAudioBase64 = audioBase64.replace(/^data:[^,]+;base64,/i, "");
       // Determinar tipo mime de audio limpio
       let audioMime = audioMimeType || "audio/mp4";
       if (audioMime.includes(";")) {
@@ -100,10 +100,14 @@ REGLAS ESTRICTAS DE CONFIANZA:
 1. NO inventes información. Si no puedes determinar con certeza un dato a partir de la foto o el audio, debes dejarlo como cadena vacía ("") o null.
 2. Si se menciona una cantidad en el audio (ej: "tenemos 8 unidades"), pon ese número; de lo contrario, el valor por defecto es 1.
 3. Si se mencionan precios en dólares (ej: "costó 12 y se vende en 32"), pon los valores numéricos correspondientes; si no se dijeron ni aparecen claros en etiqueta, déjalos como null.
-4. Identifica códigos de barras o alfanuméricos impresos en etiquetas como "codigoAuxiliar".
+4. Si el operador dicta un "código principal", consérvalo exactamente como texto en codigoPrincipal, incluidos los ceros iniciales; si no lo dicta, déjalo vacío para generación central.
+5. Si dicta "código de proveedor", consérvalo en codigoAuxiliar. No inventes separadores: si dice "20 25" y no es clara la escritura, conserva "20 25" para confirmación humana.
+6. Si menciona varias tallas (por ejemplo "S, M, L") y una cantidad total, NO infieras cuántas unidades hay por talla. Devuelve "S, M, L" en talla. Solo escribe "S:1, M:1, L:1" si las cantidades individuales fueron dictadas.
+7. Prioriza el dato expresamente dictado sobre conjeturas visuales; no atribuyas composición textil precisa solo por apariencia.
 
 Debes responder ÚNICAMENTE un JSON con esta estructura exacta:
 {
+  "codigoPrincipal": "código principal de tienda dicho por el operador, conservando ceros iniciales, o vacío",
   "codigoAuxiliar": "código de proveedor visible en etiqueta o dicho en audio, o vacío",
   "proveedor": "nombre del proveedor si se identificó, o vacío",
   "cantidad": 1,
@@ -121,17 +125,41 @@ Debes responder ÚNICAMENTE un JSON con esta estructura exacta:
     // 5. Llamar a la API de Gemini
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${apiKey}`;
 
-    const geminiResponse = await fetch(geminiUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts }],
-        generationConfig: {
-          response_mime_type: "application/json",
-          temperature: 0.1
-        }
-      })
-    });
+    // Mantener un margen frente al límite de respuesta síncrona de Netlify.
+    // Devolver JSON legible al operador en lugar de dejar que venza la conexión.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 23000);
+    let geminiResponse;
+    const startedAt = Date.now();
+    try {
+      geminiResponse = await fetch(geminiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          contents: [{ parts }],
+          generationConfig: {
+            response_mime_type: "application/json",
+            temperature: 0.1
+          }
+        })
+      });
+      console.info("Gemini terminó en", Date.now() - startedAt, "ms; HTTP", geminiResponse.status);
+    } catch (requestError) {
+      if (requestError.name === "AbortError") {
+        console.warn("Gemini excedió 23 segundos.");
+        return {
+          statusCode: 504,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            error: "Gemini tardó demasiado en analizar la prenda. Utiliza un audio de máximo 20 segundos y vuelve a intentarlo."
+          })
+        };
+      }
+      throw requestError;
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!geminiResponse.ok) {
       const errorText = await geminiResponse.text();
