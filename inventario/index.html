@@ -147,7 +147,7 @@
           <div class="step-number">2</div>
           <div>
             <h2 class="step-title">Dictado de Voz (Opcional)</h2>
-            <p class="step-desc">Indica cantidades, precios, código de proveedor o características.</p>
+            <p class="step-desc">Indica códigos, tallas, cantidades y precios. Máximo 20 segundos de audio.</p>
           </div>
         </div>
 
@@ -197,7 +197,7 @@
       <div id="loadingOverlay" class="loading-box" style="display: none;">
         <div class="spinner"></div>
         <div class="loading-text" id="loadingMessage">Analizando prenda con Inteligencia Artificial...</div>
-        <div class="loading-sub">Esto toma de 2 a 4 segundos</div>
+        <div class="loading-sub">El análisis puede tardar hasta 25 segundos</div>
       </div>
 
       <!-- PASO 3: FORMULARIO DE CONFIRMACIÓN Y EDICIÓN -->
@@ -223,7 +223,7 @@
               <span class="badge-lock">🔒 LockService Central</span>
             </div>
             <input type="text" id="itemCodigoPrincipal" placeholder="[Se asignará automáticamente ej: LAU-0001]">
-            <small class="field-hint">Déjalo vacío para asignación correlativa automática o escribe uno personalizado.</small>
+            <small class="field-hint">Si dictaste un código, revísalo; si lo dejas vacío se generará uno automáticamente.</small>
           </div>
 
           <div class="form-row-2">
@@ -250,7 +250,7 @@
             <!-- Talla -->
             <div class="form-group">
               <label for="itemTalla">Talla:</label>
-              <input type="text" id="itemTalla" placeholder="Ej: M / S, M, L / Talla Única">
+              <input type="text" id="itemTalla" placeholder="Ej: M / S:1, M:1, L:1 / Talla Única">
             </div>
           </div>
 
