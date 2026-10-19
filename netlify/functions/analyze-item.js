@@ -152,7 +152,7 @@ Debes responder ÚNICAMENTE un JSON con esta estructura exacta:
           statusCode: 504,
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            error: "Gemini tardó demasiado en analizar la prenda. Utiliza un audio de máximo 20 segundos y vuelve a intentarlo."
+            error: "Gemini tardó demasiado en analizar la prenda. Vuelve a intentarlo con un dictado más breve si el problema persiste."
           })
         };
       }
