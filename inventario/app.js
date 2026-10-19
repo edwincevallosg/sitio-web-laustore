@@ -325,7 +325,7 @@
       const options = mimeType ? { mimeType } : {};
       state.mediaRecorder = new MediaRecorder(stream, options);
       state.audioChunks = [];
-      state.audioMimeType = mimeType || "audio/mp4";
+      state.audioMimeType = state.mediaRecorder.mimeType || mimeType || "audio/mp4";
 
       state.mediaRecorder.ondataavailable = function (e) {
         if (e.data && e.data.size > 0) {
@@ -367,8 +367,8 @@
         const secs = String(state.recordSeconds % 60).padStart(2, "0");
         dom.recordTimer.textContent = `${mins}:${secs}`;
 
-        // Limitar a 45 segundos para mantenerlo ligero
-        if (state.recordSeconds >= 45) {
+        // Capturas breves para evitar que Gemini exceda el tiempo de Netlify
+        if (state.recordSeconds >= 20) {
           stopVoiceRecording();
         }
       }, 1000);
@@ -421,16 +421,30 @@
         sucursal: state.branch
       };
 
-      const res = await fetch("/.netlify/functions/analyze-item", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
+      const controller = new AbortController();
+      const requestTimer = setTimeout(() => controller.abort(), 28000);
+      let res;
+      try {
+        res = await fetch("/.netlify/functions/analyze-item", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        });
+      } finally {
+        clearTimeout(requestTimer);
+      }
 
-      const data = await res.json();
-
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "Error al procesar la prenda con IA.");
+      // Netlify puede devolver una página HTML de error (por ejemplo un 504).
+      // No intentar interpretarla como JSON.
+      const rawResponse = await res.text();
+      let data = null;
+      try { data = JSON.parse(rawResponse); } catch (_) { /* respuesta no JSON */ }
+      if (!res.ok || !data || !data.success) {
+        if (res.status === 504 || res.status === 502) {
+          throw new Error("El servicio de análisis tardó demasiado (HTTP " + res.status + "). Graba máximo 20 segundos e inténtalo de nuevo.");
+        }
+        throw new Error((data && data.error) || "No se recibió una respuesta válida del análisis. HTTP " + res.status);
       }
 
       // Rellenar formulario con lo detectado
@@ -441,7 +455,10 @@
       dom.stepConfirmation.scrollIntoView({ behavior: "smooth" });
 
     } catch (err) {
-      alert(`⚠️ ${err.message || "No se pudo completar el análisis."}\n\nPuedes llenar los campos manualmente a continuación.`);
+      const errorMessage = err.name === "AbortError"
+        ? "La solicitud tardó demasiado en responder. Graba máximo 20 segundos y vuelve a intentarlo."
+        : (err.message || "No se pudo completar el análisis.");
+      alert(`⚠️ ${errorMessage}\n\nPuedes llenar los campos manualmente a continuación.`);
       populateConfirmationForm({});
       dom.stepConfirmation.style.display = "block";
       dom.stepConfirmation.scrollIntoView({ behavior: "smooth" });
@@ -452,7 +469,7 @@
   }
 
   function populateConfirmationForm(item) {
-    dom.itemCodigoPrincipal.value = ""; // Dejar vacío para asignación automática por LockService
+    dom.itemCodigoPrincipal.value = item.codigoPrincipal == null ? "" : String(item.codigoPrincipal); // Conservar el código dictado, incluso "001"
     dom.itemCodigoAuxiliar.value = item.codigoAuxiliar || "";
     dom.itemProveedor.value = item.proveedor || "";
     dom.itemCantidad.value = item.cantidad || 1;
@@ -469,6 +486,22 @@
   // =========================================================================
   async function onSaveInventorySubmit(e) {
     e.preventDefault();
+
+    // Varias tallas requieren desglose explícito; 3 prendas S/M/L no implican 1 de cada.
+    const tallaValue = dom.itemTalla.value.trim().toUpperCase();
+    const sizes = Array.from(new Set(tallaValue.match(/\b(?:XXL|XL|XS|S|M|L)\b/g) || []));
+    const combinedSingleSize = /^(?:XXL|XL|XS|S|M|L)\s*\/\s*(?:XXL|XL|XS|S|M|L)$/.test(tallaValue);
+    if (sizes.length > 1 && !combinedSingleSize) {
+      const pairs = [...tallaValue.matchAll(/\b(XXL|XL|XS|S|M|L)\s*[:=]\s*(\d+)\b/g)];
+      const quantityBySize = new Map(pairs.map(match => [match[1], Number(match[2])]));
+      const total = [...quantityBySize.values()].reduce((acc, qty) => acc + qty, 0);
+      if (quantityBySize.size !== sizes.length || total !== Number(dom.itemCantidad.value)) {
+        dom.saveErrorMsg.textContent = "Indica la cantidad por talla (ej.: S:1, M:1, L:1) y verifica que la suma coincida con la cantidad física. No se asignarán cantidades por suposición.";
+        dom.saveErrorMsg.style.display = "block";
+        dom.saveErrorMsg.scrollIntoView({ behavior: "smooth", block: "center" });
+        return;
+      }
+    }
 
     dom.saveErrorMsg.style.display = "none";
     showLoading("Guardando en Google Sheets y subiendo foto a Drive...");
