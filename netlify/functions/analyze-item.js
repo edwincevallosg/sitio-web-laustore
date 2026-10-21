@@ -27,7 +27,7 @@ function reconcileSpokenFields(item, transcript) {
   const numberPattern = "(\\d+(?:[.,]\\d{1,2})?|[a-z]+)";
   const matchPrice = (label) => {
     const rx = new RegExp("\\b(?:precio\\s+(?:de\\s+)?" + label +
-      (label === "compra" ? "|costo\\s+(?:de\\s+)?compra" : "|se\\s+vende\\s+(?:en\\s+)?") +
+      (label === "compra" ? "|costo\\s+(?:de\\s+)?compra|compra" : "|se\\s+vende\\s+(?:en\\s+)?|venta") +
       ")\\s*(?:es|de|en|a|:|\\$)?\\s*\\$?\\s*" + numberPattern + "\\b", "i");
     const m = normalized.match(rx);
     return m ? parseAmount(m[1]) : null;
@@ -37,7 +37,7 @@ function reconcileSpokenFields(item, transcript) {
   if ((item.precioCompra == null || item.precioCompra === "") && compra !== null) item.precioCompra = compra;
   if ((item.precioVenta == null || item.precioVenta === "") && venta !== null) item.precioVenta = venta;
 
-  const aux = normalized.match(/\b(?:codigo\s+(?:(?:auxiliar|de[l]?\s+proveedor)|del?\s+proveedor)|sku)\s*(?:numero\s+|es\s+|:?\s*)(\d[\d\s-]{0,14}\d|\d)\b/i);
+  const aux = normalized.match(/\b(?:codigo\s+(?:(?:auxiliar|de[l]?\s+proveedor)|proveedor|del?\s+proveedor)|sku)\s*(?:numero\s+|es\s+|:?\s*)(\d[\d\s-]{0,14}\d|\d)\b/i);
   if (!item.codigoAuxiliar && aux) item.codigoAuxiliar = aux[1].trim();
 
   const sizes = [];
