@@ -68,6 +68,8 @@
 
     // Confirmation Form
     stepConfirmation: document.getElementById("stepConfirmation"),
+    voiceTranscriptBox: document.getElementById("voiceTranscriptBox"),
+    voiceTranscriptText: document.getElementById("voiceTranscriptText"),
     itemForm: document.getElementById("itemForm"),
     itemCodigoPrincipal: document.getElementById("itemCodigoPrincipal"),
     itemCodigoAuxiliar: document.getElementById("itemCodigoAuxiliar"),
@@ -711,8 +713,23 @@
         throw new Error((data && data.error) || "No se recibió una respuesta válida del análisis. HTTP " + res.status);
       }
 
-      // Rellenar formulario con lo detectado
+      // Confirmar qué información de voz fue realmente entendida.
+      if (state.audioBase64 && (!data.audioInterpretado || !data.transcripcionVoz)) {
+        throw new Error("El análisis visual funcionó, pero Gemini no confirmó la voz. Vuelve a grabar y escucha el audio antes de analizar.");
+      }
+      dom.voiceTranscriptBox.style.display = data.audioInterpretado ? "block" : "none";
+      dom.voiceTranscriptText.textContent = data.transcripcionVoz || "";
       populateConfirmationForm(data.item);
+
+      // Avisar de campos críticos que aún requieran verificación del operador.
+      const faltan = [];
+      if (!dom.itemCodigoAuxiliar.value.trim()) faltan.push("código del proveedor");
+      if (!dom.itemTalla.value.trim()) faltan.push("talla");
+      if (!dom.itemPrecioCompra.value.trim()) faltan.push("precio de compra");
+      if (!dom.itemPrecioVenta.value.trim()) faltan.push("precio de venta");
+      if (faltan.length && data.audioInterpretado) {
+        dom.voiceTranscriptText.textContent += "\n\nRevisa los campos pendientes: " + faltan.join(", ") + ".";
+      }
 
       // Mostrar sección de confirmación y scroll suave hacia ella
       dom.stepConfirmation.style.display = "block";
@@ -723,8 +740,13 @@
         ? "La solicitud tardó demasiado en responder. Puedes volver a intentarlo con un dictado más breve."
         : (err.message || "No se pudo completar el análisis.");
       alert(`⚠️ ${errorMessage}\n\nPuedes llenar los campos manualmente a continuación.`);
-      populateConfirmationForm({});
-      dom.stepConfirmation.style.display = "block";
+      // En un fallo de audio no sustituir datos previos ni presentar la foto
+      // como si Gemini hubiese escuchado correctamente al operador.
+      dom.voiceTranscriptBox.style.display = "none";
+      if (dom.stepConfirmation.style.display !== "block") {
+        // Mantener la opción manual solo si el usuario decide continuar sin voz.
+        dom.stepConfirmation.style.display = "block";
+      }
       dom.stepConfirmation.scrollIntoView({ behavior: "smooth" });
     } finally {
       hideLoading();
@@ -842,6 +864,8 @@
     resetPhoto();
     discardAudio();
     dom.itemForm.reset();
+    dom.voiceTranscriptBox.style.display = "none";
+    dom.voiceTranscriptText.textContent = "";
     dom.stepConfirmation.style.display = "none";
     dom.saveErrorMsg.style.display = "none";
     window.scrollTo({ top: 0, behavior: "smooth" });
