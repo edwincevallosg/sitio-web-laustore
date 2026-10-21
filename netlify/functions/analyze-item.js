@@ -102,8 +102,9 @@ REGLAS ESTRICTAS DE CONFIANZA:
 3. Si se mencionan precios en dólares (ej: "costó 12 y se vende en 32"), pon los valores numéricos correspondientes; si no se dijeron ni aparecen claros en etiqueta, déjalos como null.
 4. Si el operador dicta un "código principal", consérvalo exactamente como texto en codigoPrincipal, incluidos los ceros iniciales; si no lo dicta, déjalo vacío para generación central.
 5. Si dicta "código de proveedor", consérvalo en codigoAuxiliar. No inventes separadores: si dice "20 25" y no es clara la escritura, conserva "20 25" para confirmación humana.
-6. Si menciona varias tallas (por ejemplo "S, M, L") y una cantidad total, NO infieras cuántas unidades hay por talla. Devuelve "S, M, L" en talla. Solo escribe "S:1, M:1, L:1" si las cantidades individuales fueron dictadas.
+6. Si menciona varias tallas (por ejemplo "S, M, L") y una cantidad total, NO infieras cuántas unidades hay por talla. Devuelve "S, M, L" en talla. Si dicta cantidades individuales como "S uno, M uno, L uno, XL uno" o "S1, M1, L1, XL1", normaliza SIEMPRE a "S:1, M:1, L:1, XL:1" en talla y usa la suma de unidades explícitas en cantidad.
 7. Prioriza el dato expresamente dictado sobre conjeturas visuales; no atribuyas composición textil precisa solo por apariencia.
+8. El código principal identifica al MODELO y se reutiliza entre distintos colores. Mantén el mismo código principal si cambia solamente el color; no generes códigos diferentes por color.
 
 Debes responder ÚNICAMENTE un JSON con esta estructura exacta:
 {
@@ -112,7 +113,7 @@ Debes responder ÚNICAMENTE un JSON con esta estructura exacta:
   "proveedor": "nombre del proveedor si se identificó, o vacío",
   "cantidad": 1,
   "descripcion": "nombre o descripción clara de la prenda (ej: Blazer entallado de corte sastre)",
-  "talla": "talla o tallas identificadas (ej: S, M, L, XL, Talla Única), o vacío",
+  "talla": "distribución explícita S:1, M:1, L:1, XL:1 si se dictan unidades por talla; de otro modo tallas sueltas, o vacío",
   "color": "color principal y variantes observadas (ej: Vino, Negro, Camel)",
   "caracteristicas": "detalles como tipo de tela (Punto Roma, Seda, Cuerina, etc.), forro, botones o textura",
   "precioCompra": null,
