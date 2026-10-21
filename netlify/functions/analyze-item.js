@@ -4,6 +4,60 @@
  * utilizando Google Gemini Multimodal para extraer datos estructurados de inventario.
  */
 
+// Conciliación conservadora de la transcripción: no crea datos no pronunciados.
+function reconcileSpokenFields(item, transcript) {
+  if (!transcript) return item;
+  const normalized = transcript.toLowerCase().normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+  const quantities = {
+    cero: 0, un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4,
+    cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10,
+    once: 11, doce: 12, trece: 13, catorce: 14, quince: 15,
+    dieciseis: 16, diecisiete: 17, dieciocho: 18, diecinueve: 19,
+    veinte: 20, veintiuno: 21, veintidos: 22, veintitres: 23,
+    veinticuatro: 24, veinticinco: 25, veintiseis: 26, treinta: 30,
+    cuarenta: 40, cincuenta: 50, sesenta: 60
+  };
+  const parseAmount = (str) => {
+    const value = String(str || "").trim().toLowerCase().replace(",", ".");
+    if (/^\d+(?:\.\d{1,2})?$/.test(value)) return Number(value);
+    return Object.prototype.hasOwnProperty.call(quantities, value) ? quantities[value] : null;
+  };
+  // Usar valores solo cuando están asociados a una etiqueta explícita.
+  const numberPattern = "(\\d+(?:[.,]\\d{1,2})?|[a-z]+)";
+  const matchPrice = (label) => {
+    const rx = new RegExp("\\b(?:precio\\s+(?:de\\s+)?" + label +
+      (label === "compra" ? "|costo\\s+(?:de\\s+)?compra" : "|se\\s+vende\\s+(?:en\\s+)?") +
+      ")\\s*(?:es|de|en|a|:|\\$)?\\s*\\$?\\s*" + numberPattern + "\\b", "i");
+    const m = normalized.match(rx);
+    return m ? parseAmount(m[1]) : null;
+  };
+  const compra = matchPrice("compra");
+  const venta = matchPrice("venta");
+  if ((item.precioCompra == null || item.precioCompra === "") && compra !== null) item.precioCompra = compra;
+  if ((item.precioVenta == null || item.precioVenta === "") && venta !== null) item.precioVenta = venta;
+
+  const aux = normalized.match(/\b(?:codigo\s+(?:(?:auxiliar|de[l]?\s+proveedor)|del?\s+proveedor)|sku)\s*(?:numero\s+|es\s+|:?\s*)(\d[\d\s-]{0,14}\d|\d)\b/i);
+  if (!item.codigoAuxiliar && aux) item.codigoAuxiliar = aux[1].trim();
+
+  const sizes = [];
+  const seen = new Set();
+  const sizesRegex = /\b(XXL|XL|XS|S|M|L)\s*[:=]?\s*(\d+|uno|una|un|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\b/gi;
+  for (const match of normalized.matchAll(sizesRegex)) {
+    const size = match[1].toUpperCase();
+    const qty = parseAmount(match[2]);
+    if (qty !== null && qty > 0 && !seen.has(size)) {
+      seen.add(size);
+      sizes.push({ size, qty });
+    }
+  }
+  if (sizes.length) {
+    item.talla = sizes.map(x => x.size + ":" + x.qty).join(", ");
+    item.cantidad = sizes.reduce((n, x) => n + x.qty, 0);
+  }
+  return item;
+}
+
 exports.handler = async (event) => {
   // CORS Preflight
   if (event.httpMethod === "OPTIONS") {
@@ -134,7 +188,7 @@ REGLAS ESTRICTAS DE CONFIANZA:
 6. Si menciona varias tallas (por ejemplo "S, M, L") y una cantidad total, NO infieras cuántas unidades hay por talla. Devuelve "S, M, L" en talla. Si dicta cantidades individuales como "S uno, M uno, L uno, XL uno" o "S1, M1, L1, XL1", normaliza SIEMPRE a "S:1, M:1, L:1, XL:1" en talla y usa la suma de unidades explícitas en cantidad.
 7. Prioriza el dato expresamente dictado sobre conjeturas visuales; no atribuyas composición textil precisa solo por apariencia.
 8. El código principal identifica al MODELO y se reutiliza entre distintos colores. Mantén el mismo código principal si cambia solamente el color; no generes códigos diferentes por color.
-9. PRIORIDAD CRÍTICA: si se adjunta audio, escúchalo y transcribe LITERALMENTE las palabras del operador en "transcripcionVoz" antes de extraer campos. No inventes una transcripción ni utilices este prompt como fuente de voz. Si el audio no puede oírse o no contiene palabras inteligibles, devuelve "" en transcripcionVoz.
+9. PRIORIDAD CRÍTICA: si se adjunta audio, escúchalo y transcribe COMPLETA Y LITERALMENTE todas las palabras del operador en "transcripcionVoz", incluidos números, códigos, tallas y precios, antes de extraer campos. No inventes una transcripción ni utilices este prompt como fuente de voz. Si el audio no puede oírse o no contiene palabras inteligibles, devuelve "" en transcripcionVoz.
 10. Extrae código de proveedor, distribución por talla y precios del contenido realmente dictado. Un código como "3048" y un precio como "doce dólares" deben conservarse en sus respectivos campos. Si no aparecen en el audio o una etiqueta legible, déjalos vacíos.
 11. NO asumas "talla única" a partir de la fotografía. Solo escribe ÚNICA si se escuchó explícitamente "talla única" o aparece en una etiqueta legible. Diferencia entre cantidad total y cantidades por talla.
 12. Si el audio no fue adjuntado, transcripcionVoz debe ser "" y ningún campo debe atribuirse a una voz inexistente.
@@ -244,6 +298,10 @@ Debes responder ÚNICAMENTE un JSON con esta estructura exacta:
         })
       };
     }
+
+    // Recuperar datos explícitos de la transcripción si el modelo los omitió
+    // al generar el JSON. Si no se dijeron, dejarlos pendientes.
+    reconcileSpokenFields(parsedItem, transcript);
 
     // La transcripción se muestra al operador, no se guarda en la hoja.
     delete parsedItem.transcripcionVoz;
