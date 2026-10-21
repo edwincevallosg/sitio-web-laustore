@@ -17,6 +17,7 @@
     audioBase64: null,
     audioMimeType: null,
     mediaRecorder: null,
+    wavRecorder: null,
     audioChunks: [],
     recordInterval: null,
     recordSeconds: 0,
@@ -320,6 +321,15 @@
     }
 
     if (state.recordingPhase !== "idle") return;
+    // Safari en iPhone puede producir grabaciones MP4 sin duración válida.
+    // Registrar voz en WAV PCM para evitar archivos MP4 incompletos.
+    const isIos = /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    if (isIos) {
+      await startIosWavRecording();
+      return;
+    }
+
     state.recordingPhase = "starting";
     dom.btnRecordToggle.disabled = true;
 
@@ -439,6 +449,10 @@
   }
 
   function stopVoiceRecording() {
+    if (state.wavRecorder && state.recordingPhase === "recording") {
+      stopIosWavRecording();
+      return;
+    }
     if (state.recordingPhase !== "recording" || !state.mediaRecorder) return;
     state.recordingPhase = "stopping";
     dom.btnRecordToggle.disabled = true;
@@ -454,6 +468,173 @@
     clearInterval(state.recordInterval);
     dom.btnRecordToggle.classList.remove("recording");
     dom.recordTimer.style.display = "none";
+  }
+
+  // Grabador de iPhone: PCM mono WAV a 16 kHz, con duración verificable.
+  // Un minuto ocupa aprox. 1,9 MB, dentro del límite de carga de Netlify.
+  function encodeIosWav(chunks, sampleRate) {
+    const totalFrames = chunks.reduce((n, chunk) => n + chunk.length, 0);
+    if (totalFrames < sampleRate) throw new Error("Audio vacío o menor a un segundo.");
+    const all = new Float32Array(totalFrames);
+    let offset = 0;
+    for (const chunk of chunks) {
+      all.set(chunk, offset);
+      offset += chunk.length;
+    }
+    const targetRate = 16000;
+    const ratio = sampleRate / targetRate;
+    const count = Math.floor(totalFrames / ratio);
+    const buffer = new ArrayBuffer(44 + count * 2);
+    const view = new DataView(buffer);
+    const ascii = (at, str) => {
+      for (let i = 0; i < str.length; i++) view.setUint8(at + i, str.charCodeAt(i));
+    };
+    ascii(0, "RIFF");
+    view.setUint32(4, buffer.byteLength - 8, true);
+    ascii(8, "WAVE");
+    ascii(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM
+    view.setUint16(22, 1, true); // mono
+    view.setUint32(24, targetRate, true);
+    view.setUint32(28, targetRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    ascii(36, "data");
+    view.setUint32(40, count * 2, true);
+    for (let i = 0; i < count; i++) {
+      const at = Math.min(Math.floor(i * ratio), totalFrames - 1);
+      const next = Math.min(at + 1, totalFrames - 1);
+      const frac = i * ratio - at;
+      const value = Math.max(-1, Math.min(1, all[at] + (all[next] - all[at]) * frac));
+      view.setInt16(44 + i * 2, value < 0 ? value * 32768 : value * 32767, true);
+    }
+    return new Blob([buffer], { type: "audio/wav" });
+  }
+
+  function resetVoicePreview() {
+    state.audioBase64 = null;
+    state.audioPreviewFallbackUsed = false;
+    if (state.audioObjectUrl) URL.revokeObjectURL(state.audioObjectUrl);
+    state.audioObjectUrl = null;
+    dom.audioElement.pause();
+    dom.audioElement.removeAttribute("src");
+    dom.audioElement.load();
+    dom.audioPlaybackBox.style.display = "none";
+  }
+
+  function showRecordingUi() {
+    dom.btnRecordToggle.classList.add("recording");
+    dom.voiceStatusText.textContent = "Grabando voz... Habla claro sobre la prenda.";
+    dom.recordTimer.style.display = "inline-block";
+    dom.recordTimer.textContent = "00:00";
+    dom.audioPlaybackBox.style.display = "none";
+    state.recordSeconds = 0;
+    clearInterval(state.recordInterval);
+    state.recordInterval = setInterval(() => {
+      state.recordSeconds++;
+      const mm = String(Math.floor(state.recordSeconds / 60)).padStart(2, "0");
+      const ss = String(state.recordSeconds % 60).padStart(2, "0");
+      dom.recordTimer.textContent = mm + ":" + ss;
+      if (state.recordSeconds >= 60) stopVoiceRecording();
+    }, 1000);
+  }
+
+  async function startIosWavRecording() {
+    state.recordingPhase = "starting";
+    dom.btnRecordToggle.disabled = true;
+    let ctx = null;
+    let stream = null;
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) throw new Error("Este navegador no permite grabación WAV.");
+      // Crear/desbloquear contexto con la pulsación del usuario en iOS.
+      ctx = new AudioCtx();
+      const contextReady = ctx.state === "suspended" ? ctx.resume() : Promise.resolve();
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
+      await contextReady;
+      if (ctx.state !== "running" || typeof ctx.createScriptProcessor !== "function") {
+        throw new Error("El motor de audio está suspendido. Abre el portal directamente en Safari.");
+      }
+
+      const input = ctx.createMediaStreamSource(stream);
+      const processor = ctx.createScriptProcessor(4096, 1, 1);
+      const silent = ctx.createGain();
+      silent.gain.value = 0;
+      const chunks = [];
+      processor.onaudioprocess = (event) => {
+        if (state.recordingPhase !== "recording") return;
+        chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+      };
+      input.connect(processor);
+      processor.connect(silent);
+      silent.connect(ctx.destination);
+
+      resetVoicePreview();
+      state.audioMimeType = "audio/wav";
+      state.wavRecorder = { ctx, stream, input, processor, silent, chunks };
+      state.recordingPhase = "recording";
+      dom.btnRecordToggle.disabled = false;
+      showRecordingUi();
+    } catch (err) {
+      console.error("No se inició la grabación WAV:", err);
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      if (ctx) ctx.close().catch(() => {});
+      state.wavRecorder = null;
+      state.recordingPhase = "idle";
+      dom.btnRecordToggle.disabled = false;
+      dom.voiceStatusText.textContent = "No se pudo iniciar la grabación en iPhone.";
+      alert((err && err.message) || "No se pudo utilizar el micrófono.");
+    }
+  }
+
+  function stopIosWavRecording() {
+    if (state.recordingPhase !== "recording" || !state.wavRecorder) return;
+    state.recordingPhase = "stopping";
+    dom.btnRecordToggle.disabled = true;
+    dom.btnRecordToggle.classList.remove("recording");
+    dom.voiceStatusText.textContent = "Guardando audio...";
+    dom.recordTimer.style.display = "none";
+    clearInterval(state.recordInterval);
+
+    const wav = state.wavRecorder;
+    state.wavRecorder = null;
+    wav.processor.onaudioprocess = null;
+    wav.input.disconnect();
+    wav.processor.disconnect();
+    wav.silent.disconnect();
+    wav.stream.getTracks().forEach(t => t.stop());
+    wav.ctx.close().catch(() => {});
+
+    try {
+      const duration = wav.chunks.reduce((n, chunk) => n + chunk.length, 0) / wav.ctx.sampleRate;
+      const blob = encodeIosWav(wav.chunks, wav.ctx.sampleRate);
+      if (!blob.size || duration < 1) throw new Error("El audio quedó vacío.");
+      const reader = new FileReader();
+      reader.onerror = () => {
+        state.recordingPhase = "idle";
+        dom.btnRecordToggle.disabled = false;
+        dom.voiceStatusText.textContent = "No se pudo guardar el audio. Vuelve a grabar.";
+      };
+      reader.onload = (event) => {
+        state.audioBase64 = event.target.result;
+        state.audioObjectUrl = URL.createObjectURL(blob);
+        state.audioMimeType = "audio/wav";
+        dom.audioElement.src = state.audioObjectUrl;
+        dom.audioElement.load();
+        dom.audioPlaybackBox.style.display = "flex";
+        dom.voiceStatusText.textContent = "Audio de " + Math.round(duration) + " segundos grabado y listo para analizar.";
+        state.recordingPhase = "idle";
+        dom.btnRecordToggle.disabled = false;
+      };
+      reader.readAsDataURL(blob);
+    } catch (err) {
+      console.error("Error al generar WAV:", err);
+      state.audioBase64 = null;
+      state.recordingPhase = "idle";
+      dom.btnRecordToggle.disabled = false;
+      dom.voiceStatusText.textContent = "No se pudo conservar el audio. Grábalo nuevamente.";
+    }
   }
 
   function discardAudio() {
