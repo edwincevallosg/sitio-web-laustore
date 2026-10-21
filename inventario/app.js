@@ -24,6 +24,9 @@
     recordingPhase: "idle",
     audioObjectUrl: null,
     audioPreviewFallbackUsed: false,
+    hasSuccessfulAnalysis: false,
+    completingFields: false,
+    voiceTranscript: "",
     excelExportUrl: null
   };
 
@@ -70,6 +73,7 @@
     stepConfirmation: document.getElementById("stepConfirmation"),
     voiceTranscriptBox: document.getElementById("voiceTranscriptBox"),
     voiceTranscriptText: document.getElementById("voiceTranscriptText"),
+    btnCompleteMissingVoice: document.getElementById("btnCompleteMissingVoice"),
     itemForm: document.getElementById("itemForm"),
     itemCodigoPrincipal: document.getElementById("itemCodigoPrincipal"),
     itemCodigoAuxiliar: document.getElementById("itemCodigoAuxiliar"),
@@ -181,6 +185,13 @@
 
     // AI Analyze
     dom.btnAnalyzeAI.addEventListener("click", onAnalyzeAIClick);
+    dom.btnCompleteMissingVoice.addEventListener("click", () => {
+      // Mantener la información ya reconocida y reemplazar únicamente el audio.
+      state.completingFields = true;
+      discardAudio();
+      dom.voiceStatusText.textContent = "Dicta solo los campos faltantes: código, tallas o precios.";
+      document.getElementById("stepVoice").scrollIntoView({ behavior: "smooth" });
+    });
 
     // Form Save
     dom.itemForm.addEventListener("submit", onSaveInventorySubmit);
@@ -672,7 +683,11 @@
       alert("Primero finaliza la grabación de voz y espera a que quede preparada.");
       return;
     }
- 
+    if (state.completingFields && !state.audioBase64) {
+      alert("Graba únicamente los datos faltantes y espera a que el audio quede listo antes de analizar.");
+      return;
+    }
+
     showLoading("Analizando fotografía y voz con Gemini IA...");
     dom.btnAnalyzeAI.disabled = true;
 
@@ -717,9 +732,16 @@
       if (state.audioBase64 && (!data.audioInterpretado || !data.transcripcionVoz)) {
         throw new Error("El análisis visual funcionó, pero Gemini no confirmó la voz. Vuelve a grabar y escucha el audio antes de analizar.");
       }
-      dom.voiceTranscriptBox.style.display = data.audioInterpretado ? "block" : "none";
-      dom.voiceTranscriptText.textContent = data.transcripcionVoz || "";
-      populateConfirmationForm(data.item);
+      const completar = state.hasSuccessfulAnalysis;
+      if (data.audioInterpretado) {
+        state.voiceTranscript = completar
+          ? state.voiceTranscript + "\n\nDictado adicional:\n" + data.transcripcionVoz
+          : data.transcripcionVoz;
+      }
+      dom.voiceTranscriptBox.style.display = state.voiceTranscript ? "block" : "none";
+      populateConfirmationForm(data.item, completar);
+      state.hasSuccessfulAnalysis = true;
+      state.completingFields = false;
 
       // Avisar de campos críticos que aún requieran verificación del operador.
       const faltan = [];
@@ -727,9 +749,11 @@
       if (!dom.itemTalla.value.trim()) faltan.push("talla");
       if (!dom.itemPrecioCompra.value.trim()) faltan.push("precio de compra");
       if (!dom.itemPrecioVenta.value.trim()) faltan.push("precio de venta");
-      if (faltan.length && data.audioInterpretado) {
-        dom.voiceTranscriptText.textContent += "\n\nRevisa los campos pendientes: " + faltan.join(", ") + ".";
-      }
+      dom.voiceTranscriptText.textContent = state.voiceTranscript +
+        (faltan.length ? "\n\nRevisa los campos pendientes: " + faltan.join(", ") + "." : "");
+      dom.btnCompleteMissingVoice.textContent = faltan.length
+        ? "Completar " + faltan.join(", ") + " por voz"
+        : "Corregir o añadir información por voz";
 
       // Mostrar sección de confirmación y scroll suave hacia ella
       dom.stepConfirmation.style.display = "block";
@@ -754,21 +778,34 @@
     }
   }
 
-  function populateConfirmationForm(item) {
-    dom.itemCodigoPrincipal.value = item.codigoPrincipal == null ? "" : String(item.codigoPrincipal); // Conservar el código dictado, incluso "001"
-    dom.itemCodigoAuxiliar.value = item.codigoAuxiliar || "";
-    dom.itemProveedor.value = item.proveedor || "";
-    dom.itemCantidad.value = item.cantidad || 1;
-    dom.itemDescripcion.value = item.descripcion || "";
-    dom.itemTalla.value = normalizeSizes(item.talla || "");
-    const tallasExplicitas = [...dom.itemTalla.value.matchAll(/\b(XXL|XL|XS|S|M|L):(\d+)\b/g)];
-    if (tallasExplicitas.length && !item.cantidad) {
-      dom.itemCantidad.value = tallasExplicitas.reduce((sum, t) => sum + Number(t[2]), 0);
+  function populateConfirmationForm(item, soloFaltantes = false) {
+    // Al completar por segunda vez, conservar los campos previos y las ediciones humanas.
+    const textField = (element, value) => {
+      if (value === null || value === undefined || String(value).trim() === "") return;
+      if (!soloFaltantes || !String(element.value || "").trim()) element.value = String(value);
+    };
+    const tallaAnterior = dom.itemTalla.value.trim();
+    textField(dom.itemCodigoPrincipal, item.codigoPrincipal);
+    textField(dom.itemCodigoAuxiliar, item.codigoAuxiliar);
+    textField(dom.itemProveedor, item.proveedor);
+    textField(dom.itemDescripcion, item.descripcion);
+    textField(dom.itemTalla, normalizeSizes(item.talla || ""));
+    textField(dom.itemColor, item.color);
+    textField(dom.itemCaracteristicas, item.caracteristicas);
+    textField(dom.itemPrecioCompra, item.precioCompra);
+    textField(dom.itemPrecioVenta, item.precioVenta);
+    const matches = [...dom.itemTalla.value.matchAll(/\\b(XXL|XL|XS|S|M|L):(\\d+)\\b/g)];
+    const sum = matches.reduce((n, pair) => n + Number(pair[2]), 0);
+    if (soloFaltantes) {
+      // Si antes no teníamos tallas y ahora se dictan cantidades por talla,
+      // sustituir el valor por defecto de cantidad 1 por la suma real.
+      if (!tallaAnterior && sum) dom.itemCantidad.value = String(sum);
+      else if ((!dom.itemCantidad.value || dom.itemCantidad.value === "1") && item.cantidad > 1) {
+        dom.itemCantidad.value = String(item.cantidad);
+      }
+    } else {
+      dom.itemCantidad.value = String(sum || item.cantidad || 1);
     }
-    dom.itemColor.value = item.color || "";
-    dom.itemCaracteristicas.value = item.caracteristicas || "";
-    dom.itemPrecioCompra.value = (item.precioCompra !== null && item.precioCompra !== undefined && item.precioCompra !== "") ? item.precioCompra : "";
-    dom.itemPrecioVenta.value = (item.precioVenta !== null && item.precioVenta !== undefined && item.precioVenta !== "") ? item.precioVenta : "";
   }
 
   // =========================================================================
@@ -776,6 +813,16 @@
   // =========================================================================
   async function onSaveInventorySubmit(e) {
     e.preventDefault();
+
+    const camposNoConfirmados = [];
+    if (!dom.itemCodigoAuxiliar.value.trim()) camposNoConfirmados.push("código del proveedor");
+    if (!dom.itemTalla.value.trim()) camposNoConfirmados.push("talla");
+    if (!dom.itemPrecioCompra.value.trim()) camposNoConfirmados.push("precio de compra");
+    if (!dom.itemPrecioVenta.value.trim()) camposNoConfirmados.push("precio de venta");
+    if (camposNoConfirmados.length && !window.confirm(
+      "Hay información pendiente: " + camposNoConfirmados.join(", ") +
+      ". ¿Quieres guardar el registro incompleto de todos modos?"
+    )) return;
 
     // Varias tallas requieren desglose explícito; 3 prendas S/M/L no implican 1 de cada.
     const tallaValue = normalizeSizes(dom.itemTalla.value);
@@ -864,6 +911,10 @@
     resetPhoto();
     discardAudio();
     dom.itemForm.reset();
+    state.hasSuccessfulAnalysis = false;
+    state.completingFields = false;
+    state.voiceTranscript = "";
+    dom.btnCompleteMissingVoice.textContent = "Completar campos faltantes por voz (sin repetir la foto)";
     dom.voiceTranscriptBox.style.display = "none";
     dom.voiceTranscriptText.textContent = "";
     dom.stepConfirmation.style.display = "none";
