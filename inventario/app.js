@@ -794,7 +794,7 @@
     textField(dom.itemCaracteristicas, item.caracteristicas);
     textField(dom.itemPrecioCompra, item.precioCompra);
     textField(dom.itemPrecioVenta, item.precioVenta);
-    const matches = [...dom.itemTalla.value.matchAll(/\\b(XXL|XL|XS|S|M|L):(\\d+)\\b/g)];
+    const matches = [...dom.itemTalla.value.matchAll(/\b(XXL|XL|XS|S|M|L):(\d+)\b/g)];
     const sum = matches.reduce((n, pair) => n + Number(pair[2]), 0);
     if (soloFaltantes) {
       // Si antes no teníamos tallas y ahora se dictan cantidades por talla,
