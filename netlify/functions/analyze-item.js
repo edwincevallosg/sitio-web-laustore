@@ -88,6 +88,35 @@ exports.handler = async (event) => {
       });
     }
 
+    // Confirmar que el audio enviado por el iPhone contiene señal real.
+    // No registrar contenido de audio ni información personal en logs.
+    if (audioBase64 && (audioMimeType || "").startsWith("audio/wav")) {
+      const wavBytes = Buffer.from(audioBase64.replace(/^data:[^,]+;base64,/i, ""), "base64");
+      if (wavBytes.length < 32044 || wavBytes.toString("ascii", 0, 4) !== "RIFF" ||
+          wavBytes.toString("ascii", 8, 12) !== "WAVE") {
+        return {
+          statusCode: 422,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ error: "La grabación de voz está vacía o dañada. Vuelve a grabarla antes de analizar." })
+        };
+      }
+      // PCM mono de 16 bits. Muestreo espaciado para detectar archivos totalmente silenciosos.
+      let sumSquares = 0;
+      let samples = 0;
+      for (let i = 44; i + 1 < wavBytes.length; i += 64) {
+        const amp = wavBytes.readInt16LE(i) / 32768;
+        sumSquares += amp * amp;
+        samples++;
+      }
+      if (!samples || Math.sqrt(sumSquares / samples) < 0.00015) {
+        return {
+          statusCode: 422,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ error: "La grabación no contiene sonido suficiente. Comprueba el micrófono y vuelve a grabarla." })
+        };
+      }
+    }
+
     // Prompt con directrices estrictas
     const promptText = `
 Eres el asistente de levantamiento de inventario de LauStore, boutique de moda femenina en Quito, Ecuador.
@@ -105,9 +134,14 @@ REGLAS ESTRICTAS DE CONFIANZA:
 6. Si menciona varias tallas (por ejemplo "S, M, L") y una cantidad total, NO infieras cuántas unidades hay por talla. Devuelve "S, M, L" en talla. Si dicta cantidades individuales como "S uno, M uno, L uno, XL uno" o "S1, M1, L1, XL1", normaliza SIEMPRE a "S:1, M:1, L:1, XL:1" en talla y usa la suma de unidades explícitas en cantidad.
 7. Prioriza el dato expresamente dictado sobre conjeturas visuales; no atribuyas composición textil precisa solo por apariencia.
 8. El código principal identifica al MODELO y se reutiliza entre distintos colores. Mantén el mismo código principal si cambia solamente el color; no generes códigos diferentes por color.
+9. PRIORIDAD CRÍTICA: si se adjunta audio, escúchalo y transcribe LITERALMENTE las palabras del operador en "transcripcionVoz" antes de extraer campos. No inventes una transcripción ni utilices este prompt como fuente de voz. Si el audio no puede oírse o no contiene palabras inteligibles, devuelve "" en transcripcionVoz.
+10. Extrae código de proveedor, distribución por talla y precios del contenido realmente dictado. Un código como "3048" y un precio como "doce dólares" deben conservarse en sus respectivos campos. Si no aparecen en el audio o una etiqueta legible, déjalos vacíos.
+11. NO asumas "talla única" a partir de la fotografía. Solo escribe ÚNICA si se escuchó explícitamente "talla única" o aparece en una etiqueta legible. Diferencia entre cantidad total y cantidades por talla.
+12. Si el audio no fue adjuntado, transcripcionVoz debe ser "" y ningún campo debe atribuirse a una voz inexistente.
 
 Debes responder ÚNICAMENTE un JSON con esta estructura exacta:
 {
+  "transcripcionVoz": "palabras realmente escuchadas en el audio, o vacío si no hay audio o no se entiende",
   "codigoPrincipal": "código principal de tienda dicho por el operador, conservando ceros iniciales, o vacío",
   "codigoAuxiliar": "código de proveedor visible en etiqueta o dicho en audio, o vacío",
   "proveedor": "nombre del proveedor si se identificó, o vacío",
@@ -195,11 +229,32 @@ Debes responder ÚNICAMENTE un JSON con esta estructura exacta:
       parsedItem = JSON.parse(cleanJson);
     }
 
+    const transcript = typeof parsedItem.transcripcionVoz === "string"
+      ? parsedItem.transcripcionVoz.trim() : "";
+
+    // Un resultado visual no basta si el operador grabó voz.
+    if (audioBase64 && !transcript) {
+      return {
+        statusCode: 422,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          error: "Gemini reconoció la fotografía, pero no logró interpretar la voz. Comprueba que puedas escuchar el audio y vuelve a analizar o grabar.",
+          audioRecibido: true,
+          audioInterpretado: false
+        })
+      };
+    }
+
+    // La transcripción se muestra al operador, no se guarda en la hoja.
+    delete parsedItem.transcripcionVoz;
     return {
       statusCode: 200,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         success: true,
+        audioRecibido: Boolean(audioBase64),
+        audioInterpretado: Boolean(transcript),
+        transcripcionVoz: transcript,
         item: parsedItem
       })
     };
