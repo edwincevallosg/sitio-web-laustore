@@ -20,6 +20,9 @@
     audioChunks: [],
     recordInterval: null,
     recordSeconds: 0,
+    recordingPhase: "idle",
+    audioObjectUrl: null,
+    audioPlaybackError: false,
     excelExportUrl: null
   };
 
@@ -159,6 +162,13 @@
     // Voice Recorder
     dom.btnRecordToggle.addEventListener("click", toggleVoiceRecording);
     dom.btnDiscardAudio.addEventListener("click", discardAudio);
+    dom.audioElement.addEventListener("error", () => {
+      if (!state.audioBase64) return;
+      state.audioPlaybackError = true;
+      dom.audioPlaybackBox.style.display = "none";
+      dom.voiceStatusText.textContent = "El iPhone no pudo reproducir el audio. Vuelve a grabarlo.";
+      console.warn("La vista previa del audio falló en este navegador.");
+    });
 
     // AI Analyze
     dom.btnAnalyzeAI.addEventListener("click", onAnalyzeAIClick);
@@ -289,10 +299,11 @@
   // 5. GRABACIÓN DE VOZ COMPATIBLE CON iOS Y ANDROID (MediaRecorder)
   // =========================================================================
   async function toggleVoiceRecording() {
-    if (state.mediaRecorder && state.mediaRecorder.state === "recording") {
+    if (state.recordingPhase === "starting" || state.recordingPhase === "stopping") return;
+    if (state.recordingPhase === "recording") {
       stopVoiceRecording();
     } else {
-      startVoiceRecording();
+      await startVoiceRecording();
     }
   }
 
@@ -301,6 +312,10 @@
       alert("Tu navegador no soporta grabación de audio desde la web. Puedes ingresar los datos manualmente tras la foto.");
       return;
     }
+
+    if (state.recordingPhase !== "idle") return;
+    state.recordingPhase = "starting";
+    dom.btnRecordToggle.disabled = true;
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -325,6 +340,13 @@
       const options = mimeType ? { mimeType } : {};
       state.mediaRecorder = new MediaRecorder(stream, options);
       state.audioChunks = [];
+      state.audioBase64 = null;
+      state.audioPlaybackError = false;
+      if (state.audioObjectUrl) URL.revokeObjectURL(state.audioObjectUrl);
+      state.audioObjectUrl = null;
+      dom.audioElement.pause();
+      dom.audioElement.removeAttribute("src");
+      dom.audioElement.load();
       state.audioMimeType = state.mediaRecorder.mimeType || mimeType || "audio/mp4";
 
       state.mediaRecorder.ondataavailable = function (e) {
@@ -333,24 +355,53 @@
         }
       };
 
+      state.mediaRecorder.onerror = function (event) {
+        console.error("MediaRecorder error:", event.error || event);
+        clearInterval(state.recordInterval);
+        stream.getTracks().forEach(track => track.stop());
+        state.recordingPhase = "idle";
+        state.mediaRecorder = null;
+        state.audioBase64 = null;
+        dom.btnRecordToggle.disabled = false;
+        dom.btnRecordToggle.classList.remove("recording");
+        dom.voiceStatusText.textContent = "No se pudo finalizar la grabación. Vuelve a intentarlo.";
+      };
+
       state.mediaRecorder.onstop = function () {
+        clearInterval(state.recordInterval);
+        stream.getTracks().forEach(track => track.stop());
+        state.mediaRecorder = null;
         const audioBlob = new Blob(state.audioChunks, { type: state.audioMimeType });
-        
-        // Convertir a base64
+        if (!audioBlob.size) {
+          state.audioBase64 = null;
+          state.recordingPhase = "idle";
+          dom.btnRecordToggle.disabled = false;
+          dom.voiceStatusText.textContent = "La grabación quedó vacía. Vuelve a grabar.";
+          return;
+        }
+
         const reader = new FileReader();
+        reader.onerror = function () {
+          state.audioBase64 = null;
+          state.recordingPhase = "idle";
+          dom.btnRecordToggle.disabled = false;
+          dom.voiceStatusText.textContent = "No se pudo preparar el audio. Vuelve a grabar.";
+        };
         reader.onload = function (evt) {
           state.audioBase64 = evt.target.result;
-          dom.audioElement.src = URL.createObjectURL(audioBlob);
+          state.audioObjectUrl = URL.createObjectURL(audioBlob);
+          dom.audioElement.src = state.audioObjectUrl;
           dom.audioPlaybackBox.style.display = "flex";
           dom.voiceStatusText.textContent = "Audio grabado y listo para analizar.";
+          state.recordingPhase = "idle";
+          dom.btnRecordToggle.disabled = false;
         };
         reader.readAsDataURL(audioBlob);
-
-        // Apagar tracks del stream
-        stream.getTracks().forEach(track => track.stop());
       };
 
       state.mediaRecorder.start();
+      state.recordingPhase = "recording";
+      dom.btnRecordToggle.disabled = false;
 
       // UI en estado grabando
       dom.btnRecordToggle.classList.add("recording");
@@ -375,13 +426,24 @@
 
     } catch (err) {
       console.error("Error al acceder al micrófono:", err);
-      alert("No se pudo acceder al micrófono. Por favor permite el acceso al micrófono en tu navegador.");
+      state.recordingPhase = "idle";
+      dom.btnRecordToggle.disabled = false;
+      alert("No se pudo acceder al micrófono. Comprueba los permisos del navegador.");
     }
   }
 
   function stopVoiceRecording() {
-    if (state.mediaRecorder && state.mediaRecorder.state === "recording") {
+    if (state.recordingPhase !== "recording" || !state.mediaRecorder) return;
+    state.recordingPhase = "stopping";
+    dom.btnRecordToggle.disabled = true;
+    dom.voiceStatusText.textContent = "Finalizando grabación...";
+    try {
       state.mediaRecorder.stop();
+    } catch (err) {
+      console.error("Error al detener grabación:", err);
+      state.recordingPhase = "idle";
+      dom.btnRecordToggle.disabled = false;
+      dom.voiceStatusText.textContent = "No se pudo finalizar. Vuelve a grabar.";
     }
     clearInterval(state.recordInterval);
     dom.btnRecordToggle.classList.remove("recording");
@@ -390,9 +452,15 @@
 
   function discardAudio() {
     state.audioBase64 = null;
+    state.audioPlaybackError = false;
     state.audioMimeType = null;
+    if (state.audioObjectUrl) {
+      URL.revokeObjectURL(state.audioObjectUrl);
+      state.audioObjectUrl = null;
+    }
     dom.audioElement.pause();
-    dom.audioElement.src = "";
+    dom.audioElement.removeAttribute("src");
+    dom.audioElement.load();
     dom.audioPlaybackBox.style.display = "none";
     dom.voiceStatusText.textContent = "Toca el micrófono para comenzar a dictar";
   }
@@ -401,11 +469,24 @@
     dom.btnAnalyzeAI.disabled = !state.imageBase64;
   }
 
+  function normalizeSizes(value) {
+    return String(value || "").toUpperCase().trim()
+      .replace(/\b(XXL|XL|XS|S|M|L)\s*[:=]?\s*(\d+)\b/g, "$1:$2");
+  }
+
   // =========================================================================
   // 6. ANÁLISIS MULTIMODAL CON GEMINI API (NETLIFY FUNCTION)
   // =========================================================================
   async function onAnalyzeAIClick() {
     if (!state.imageBase64) return;
+    if (state.recordingPhase !== "idle") {
+      alert("Primero finaliza la grabación de voz y espera a que quede preparada.");
+      return;
+    }
+    if (state.audioPlaybackError && state.audioBase64) {
+      alert("El iPhone no pudo reproducir el audio. Vuelve a grabarlo antes de analizar.");
+      return;
+    }
 
     showLoading("Analizando fotografía y voz con Gemini IA...");
     dom.btnAnalyzeAI.disabled = true;
@@ -474,7 +555,11 @@
     dom.itemProveedor.value = item.proveedor || "";
     dom.itemCantidad.value = item.cantidad || 1;
     dom.itemDescripcion.value = item.descripcion || "";
-    dom.itemTalla.value = item.talla || "";
+    dom.itemTalla.value = normalizeSizes(item.talla || "");
+    const tallasExplicitas = [...dom.itemTalla.value.matchAll(/\b(XXL|XL|XS|S|M|L):(\d+)\b/g)];
+    if (tallasExplicitas.length && !item.cantidad) {
+      dom.itemCantidad.value = tallasExplicitas.reduce((sum, t) => sum + Number(t[2]), 0);
+    }
     dom.itemColor.value = item.color || "";
     dom.itemCaracteristicas.value = item.caracteristicas || "";
     dom.itemPrecioCompra.value = (item.precioCompra !== null && item.precioCompra !== undefined && item.precioCompra !== "") ? item.precioCompra : "";
@@ -488,7 +573,8 @@
     e.preventDefault();
 
     // Varias tallas requieren desglose explícito; 3 prendas S/M/L no implican 1 de cada.
-    const tallaValue = dom.itemTalla.value.trim().toUpperCase();
+    const tallaValue = normalizeSizes(dom.itemTalla.value);
+    dom.itemTalla.value = tallaValue;
     const sizes = Array.from(new Set(tallaValue.match(/\b(?:XXL|XL|XS|S|M|L)\b/g) || []));
     const combinedSingleSize = /^(?:XXL|XL|XS|S|M|L)\s*\/\s*(?:XXL|XL|XS|S|M|L)$/.test(tallaValue);
     if (sizes.length > 1 && !combinedSingleSize) {
