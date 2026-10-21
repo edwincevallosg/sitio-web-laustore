@@ -22,7 +22,7 @@
     recordSeconds: 0,
     recordingPhase: "idle",
     audioObjectUrl: null,
-    audioPlaybackError: false,
+    audioPreviewFallbackUsed: false,
     excelExportUrl: null
   };
 
@@ -164,10 +164,16 @@
     dom.btnDiscardAudio.addEventListener("click", discardAudio);
     dom.audioElement.addEventListener("error", () => {
       if (!state.audioBase64) return;
-      state.audioPlaybackError = true;
+      if (!state.audioPreviewFallbackUsed) {
+        // Safari puede rechazar la URL blob aunque el audio esté disponible.
+        state.audioPreviewFallbackUsed = true;
+        dom.audioElement.src = state.audioBase64;
+        dom.audioElement.load();
+        return;
+      }
       dom.audioPlaybackBox.style.display = "none";
-      dom.voiceStatusText.textContent = "El iPhone no pudo reproducir el audio. Vuelve a grabarlo.";
-      console.warn("La vista previa del audio falló en este navegador.");
+      dom.voiceStatusText.textContent = "Audio capturado. La vista previa no está disponible; puedes analizarlo o volver a grabar.";
+      console.warn("Safari no pudo reproducir la vista previa del audio grabado.");
     });
 
     // AI Analyze
@@ -341,7 +347,7 @@
       state.mediaRecorder = new MediaRecorder(stream, options);
       state.audioChunks = [];
       state.audioBase64 = null;
-      state.audioPlaybackError = false;
+      state.audioPreviewFallbackUsed = false;
       if (state.audioObjectUrl) URL.revokeObjectURL(state.audioObjectUrl);
       state.audioObjectUrl = null;
       dom.audioElement.pause();
@@ -452,7 +458,7 @@
 
   function discardAudio() {
     state.audioBase64 = null;
-    state.audioPlaybackError = false;
+    state.audioPreviewFallbackUsed = false;
     state.audioMimeType = null;
     if (state.audioObjectUrl) {
       URL.revokeObjectURL(state.audioObjectUrl);
@@ -483,11 +489,7 @@
       alert("Primero finaliza la grabación de voz y espera a que quede preparada.");
       return;
     }
-    if (state.audioPlaybackError && state.audioBase64) {
-      alert("El iPhone no pudo reproducir el audio. Vuelve a grabarlo antes de analizar.");
-      return;
-    }
-
+ 
     showLoading("Analizando fotografía y voz con Gemini IA...");
     dom.btnAnalyzeAI.disabled = true;
 
