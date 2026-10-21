@@ -130,17 +130,20 @@ function doPost(e) {
       sheet.setFrozenRows(1);
     }
 
-    // 2. Determinar Código Principal Único y Secuencial
+    // 2. El código principal identifica un modelo; puede repetirse en colores distintos.
+    // La combinación modelo + color + sucursal se controla bajo el LockService.
     var codigoPrincipal = (payload.codigoPrincipal || "").toString().trim();
-    
+
     if (!codigoPrincipal) {
-      // Generar código secuencial atómico con LockService
       codigoPrincipal = getNextSequentialCode(sheet);
     } else {
-      // Validar si ya existe para evitar duplicados accidentales
-      var isDuplicate = checkCodeExists(sheet, codigoPrincipal);
-      if (isDuplicate) {
-        throw new Error("El código '" + codigoPrincipal + "' ya está registrado en el inventario. Por favor usa un código diferente o déjalo vacío para asignarlo automáticamente.");
+      if (!String(payload.color || "").trim()) {
+        throw new Error("Confirma el color antes de guardar un modelo con código existente.");
+      }
+      if (checkVariantExists(sheet, codigoPrincipal, payload.color, payload.sucursal)) {
+        throw new Error("El modelo '" + codigoPrincipal + "' en color '" + payload.color +
+          "' ya figura en la sucursal '" + payload.sucursal +
+          "'. Revisa la fila existente antes de volver a registrarlo.");
       }
     }
 
@@ -203,8 +206,13 @@ function doPost(e) {
     // 6. Insertar en la Hoja
     sheet.appendRow(rowData);
 
-    // Formatear columnas de precios como moneda si tienen datos
+    // Conservar los ceros iniciales en códigos como 001 o 013.
     var lastRow = sheet.getLastRow();
+    var codeCell = sheet.getRange(lastRow, 1);
+    codeCell.setNumberFormat("@");
+    codeCell.setValue(String(codigoPrincipal));
+
+    // Formatear columnas de precios como moneda si tienen datos
     if (rowData[8] !== "") {
       sheet.getRange(lastRow, 9).setNumberFormat("$#,##0.00");
     }
@@ -277,17 +285,33 @@ function getNextSequentialCode(sheet) {
 }
 
 /**
- * Verifica si un código ya existe en la columna 1
+ * Normaliza claves para comparar sin diferencias por mayúsculas/acentos.
+ * Los códigos puramente numéricos 013 y 13 se consideran el mismo modelo.
  */
-function checkCodeExists(sheet, code) {
+function normalizeInventoryKey(value, numericCode) {
+  var text = String(value == null ? "" : value).trim().toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ");
+  if (numericCode && /^\d+$/.test(text)) text = text.replace(/^0+(?=\d)/, "");
+  return text;
+}
+
+/**
+ * Un mismo modelo puede tener distintos colores y repetirse entre sucursales.
+ * Evita únicamente una segunda captura del mismo modelo/color/sucursal.
+ */
+function checkVariantExists(sheet, code, color, branch) {
   var lastRow = sheet.getLastRow();
   if (lastRow <= 1) return false;
-  
-  var values = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
-  var target = code.toLowerCase().trim();
-  
+
+  var values = sheet.getRange(2, 1, lastRow - 1, 12).getDisplayValues();
+  var codeKey = normalizeInventoryKey(code, true);
+  var colorKey = normalizeInventoryKey(color, false);
+  var branchKey = normalizeInventoryKey(branch, false);
+
   for (var i = 0; i < values.length; i++) {
-    if ((values[i][0] || "").toString().toLowerCase().trim() === target) {
+    if (normalizeInventoryKey(values[i][0], true) === codeKey &&
+        normalizeInventoryKey(values[i][6], false) === colorKey &&
+        normalizeInventoryKey(values[i][11], false) === branchKey) {
       return true;
     }
   }
