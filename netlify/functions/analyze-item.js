@@ -80,7 +80,11 @@ exports.handler = async (event) => {
   }
 
   try {
-    const { pin, imageBase64, imageMimeType, audioBase64, audioMimeType, operador, sucursal } = JSON.parse(event.body || "{}");
+    const { pin, imageBase64, imageMimeType, audioBase64, audioMimeType, operador, sucursal, mode = "combined", transcripcionVoz = "" } = JSON.parse(event.body || "{}");
+    if (!["combined", "transcribe", "extract"].includes(mode)) {
+      return { statusCode: 400, headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ error: "Tipo de análisis desconocido." }) };
+    }
 
     // 1. Validar PIN del operador
     const serverPin = process.env.INVENTORY_PIN || "1234";
@@ -93,7 +97,7 @@ exports.handler = async (event) => {
     }
 
     // 2. Validar que exista imagen
-    if (!imageBase64) {
+    if (!imageBase64 && mode !== "transcribe") {
       return {
         statusCode: 400,
         headers: { "Content-Type": "application/json" },
@@ -117,17 +121,17 @@ exports.handler = async (event) => {
     // 4. Preparar partes multimodales para Gemini
     const parts = [];
 
-    // Parte de imagen
-    const cleanImageBase64 = imageBase64.replace(/^data:[^,]+;base64,/i, "");
-    parts.push({
-      inline_data: {
+    // Primera etapa: SOLO audio para transcribir completo. Segunda: foto y texto.
+    if (mode !== "transcribe") {
+      const cleanImageBase64 = imageBase64.replace(/^data:[^,]+;base64,/i, "");
+      parts.push({ inline_data: {
         mime_type: imageMimeType || "image/jpeg",
         data: cleanImageBase64
-      }
-    });
+      } });
+    }
 
-    // Parte de audio (si fue grabado)
-    if (audioBase64) {
+    // Audio solo en la etapa de transcripción o el flujo anterior.
+    if (audioBase64 && mode !== "extract") {
       const cleanAudioBase64 = audioBase64.replace(/^data:[^,]+;base64,/i, "");
       // Determinar tipo mime de audio limpio
       let audioMime = audioMimeType || "audio/mp4";
@@ -144,7 +148,7 @@ exports.handler = async (event) => {
 
     // Confirmar que el audio enviado por el iPhone contiene señal real.
     // No registrar contenido de audio ni información personal en logs.
-    if (audioBase64 && (audioMimeType || "").startsWith("audio/wav")) {
+    if (audioBase64 && mode !== "extract" && (audioMimeType || "").startsWith("audio/wav")) {
       const wavBytes = Buffer.from(audioBase64.replace(/^data:[^,]+;base64,/i, ""), "base64");
       if (wavBytes.length < 32044 || wavBytes.toString("ascii", 0, 4) !== "RIFF" ||
           wavBytes.toString("ascii", 8, 12) !== "WAVE") {
@@ -171,10 +175,21 @@ exports.handler = async (event) => {
       }
     }
 
-    // Prompt con directrices estrictas
-    const promptText = `
+    // No pedir a Gemini que interprete fotografía y transcriba simultáneamente.
+    // Una grabación, dos llamadas internas desde el mismo botón del portal.
+    const promptText = mode === "transcribe" ? `
+Eres un transcriptor especializado en inventarios de moda en español ecuatoriano.
+Transcribe ÍNTEGRAMENTE todo el audio desde la primera hasta la última palabra,
+sin resumir ni omitir el final. Escribe fielmente números, códigos de proveedor,
+precios de compra y venta, cantidades por talla y correcciones del operador.
+No utilices información de ninguna fotografía; solamente existe audio.
+No inventes palabras: si un segmento no es inteligible usa [inaudible].
+Devuelve ÚNICAMENTE JSON: {"transcripcionVoz":"transcripción completa en orden de aparición"}.
+` : `
+
 Eres el asistente de levantamiento de inventario de LauStore, boutique de moda femenina en Quito, Ecuador.
-Tu tarea es analizar la fotografía de la prenda y, si existe audio, escuchar atentamente las indicaciones habladas del operador (${operador || "operador"} en ${sucursal || "tienda"}).
+Tu tarea es analizar la fotografía de la prenda y los datos que dictó el operador (${operador || "operador"} en ${sucursal || "tienda"}), proporcionados en texto.
+Si recibes la transcripción, interprétala por completo sin omitir códigos, tallas ni precios.
 
 EL OPERADOR PUEDE HABER DICHO: cantidades, precios de compra, precios de venta, nombre del proveedor, código de etiqueta o características de la prenda.
 EN LA FOTOGRAFÍA PUEDES OBSERVAR: el tipo de prenda (blazer, blusa, vestido, falda, etc.), corte, colores principales, texturas visibles de tela y etiquetas colgantes o cosidas.
@@ -209,6 +224,9 @@ Debes responder ÚNICAMENTE un JSON con esta estructura exacta:
 }
 `;
 
+    if (mode === "extract" && transcripcionVoz) {
+      parts.push({ text: "TRANSCRIPCIÓN COMPLETA DEL OPERADOR (prioritaria para números y cantidades):\n" + String(transcripcionVoz).slice(0, 8000) });
+    }
     parts.push({ text: promptText });
 
     // 5. Llamar a la API de Gemini
@@ -283,11 +301,20 @@ Debes responder ÚNICAMENTE un JSON con esta estructura exacta:
       parsedItem = JSON.parse(cleanJson);
     }
 
-    const transcript = typeof parsedItem.transcripcionVoz === "string"
-      ? parsedItem.transcripcionVoz.trim() : "";
+    if (mode === "transcribe") {
+      const transcriptOnly = typeof parsedItem.transcripcionVoz === "string" ? parsedItem.transcripcionVoz.trim() : "";
+      if (!transcriptOnly) {
+        return { statusCode: 422, headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ error: "Gemini no pudo transcribir el audio. Verifica que se escuche hasta el final." }) };
+      }
+      return { statusCode: 200, headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ success: true, transcripcionVoz: transcriptOnly }) };
+    }
+    const transcript = mode === "extract" ? String(transcripcionVoz || "").trim()
+      : (typeof parsedItem.transcripcionVoz === "string" ? parsedItem.transcripcionVoz.trim() : "");
 
     // Un resultado visual no basta si el operador grabó voz.
-    if (audioBase64 && !transcript) {
+    if ((audioBase64 || (mode === "extract" && transcripcionVoz)) && !transcript) {
       return {
         statusCode: 422,
         headers: { "Content-Type": "application/json" },
@@ -310,7 +337,7 @@ Debes responder ÚNICAMENTE un JSON con esta estructura exacta:
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         success: true,
-        audioRecibido: Boolean(audioBase64),
+        audioRecibido: Boolean(audioBase64 || transcripcionVoz),
         audioInterpretado: Boolean(transcript),
         transcripcionVoz: transcript,
         item: parsedItem
