@@ -669,16 +669,77 @@
     dom.btnAnalyzeAI.disabled = !state.imageBase64;
   }
 
+
+function parseInventorySizes(rawValue) {
+  const source = String(rawValue == null ? "" : rawValue).trim();
+  if (!source) return { value: "", pairs: [], missing: [], hasSizes: false };
+  const text = source.toUpperCase().normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+
+  if (/^(?:TALLA\s+)?UNICA(?:\s*:\s*1)?$/.test(text)) {
+    return { value: "ÚNICA", pairs: [], missing: [], hasSizes: true };
+  }
+
+  const quantityWords = {
+    UN: 1, UNO: 1, UNA: 1, DOS: 2, TRES: 3, CUATRO: 4, CINCO: 5,
+    SEIS: 6, SIETE: 7, OCHO: 8, NUEVE: 9, DIEZ: 10, ONCE: 11,
+    DOCE: 12, TRECE: 13, CATORCE: 14, QUINCE: 15, DIECISEIS: 16,
+    DIECISIETE: 17, DIECIOCHO: 18, DIECINUEVE: 19, VEINTE: 20
+  };
+  const sizesOrder = ["XS", "S", "M", "L", "XL", "XXL", "XXXL"];
+  const sizePattern = "(XXXL|XXL|XL|XS|S|M|L)";
+  const numberPattern = "(\\d{1,3}|UN|UNO|UNA|DOS|TRES|CUATRO|CINCO|SEIS|SIETE|OCHO|NUEVE|DIEZ|ONCE|DOCE|TRECE|CATORCE|QUINCE|DIECISEIS|DIECISIETE|DIECIOCHO|DIECINUEVE|VEINTE)";
+  const quantity = token => {
+    if (/^\d+$/.test(token)) return Number(token);
+    return quantityWords[token] ?? null;
+  };
+  const resolved = new Map();
+  const spans = [];
+  const capture = (pattern, sizeIndex, countIndex, avoidOverlap) => {
+    for (const hit of text.matchAll(pattern)) {
+      const start = hit.index;
+      const stop = start + hit[0].length;
+      if (avoidOverlap && spans.some(s => start < s.end && stop > s.start)) continue;
+      const sz = hit[sizeIndex];
+      const count = quantity(hit[countIndex]);
+      if (count === null || count <= 0) continue;
+      if (!resolved.has(sz)) resolved.set(sz, count);
+      else if (resolved.get(sz) !== count) resolved.set(sz, null);
+      spans.push({ start, end: stop });
+    }
+  };
+  capture(new RegExp("\\b(?:TALLAS?\\s+)?"+sizePattern+"\\s*[:=\\-]?\\s*"+numberPattern+"\\b", "g"), 1, 2, false);
+  capture(new RegExp("\\b"+numberPattern+"\\s*(?:UNIDADES?\\s*(?:DE\\s+)?)?(?:TALLAS?\\s+)?"+sizePattern+"\\b", "g"), 2, 1, true);
+  const named = new Set(resolved.keys());
+  for (const hit of text.matchAll(/\b(XXXL|XXL|XL|XS|S|M|L)\b/g)) named.add(hit[1]);
+  const ordered = sizesOrder.filter(sz => named.has(sz));
+  if (!ordered.length) return { value: source, pairs: [], missing: [], hasSizes: false };
+
+  const pairs = ordered.filter(sz => resolved.get(sz) > 0)
+    .map(sz => ({ size: sz, quantity: resolved.get(sz) }));
+  const missing = ordered.filter(sz => !Number.isInteger(resolved.get(sz)) || resolved.get(sz) <= 0);
+  return {
+    value: ordered.map(sz => resolved.get(sz) > 0 ? sz + ":" + resolved.get(sz) : sz).join(", "),
+    pairs, missing, hasSizes: true
+  };
+}
+
   function normalizeSizes(value) {
-    return String(value || "").toUpperCase().trim()
-      .replace(/\b(XXL|XL|XS|S|M|L)\s*[:=]?\s*(\d+)\b/g, "$1:$2");
+    return parseInventorySizes(value).value;
   }
 
   // =========================================================================
   // 6. ANÁLISIS MULTIMODAL CON GEMINI API (NETLIFY FUNCTION)
   // =========================================================================
   async function onAnalyzeAIClick() {
-    if (!state.imageBase64) return;
+    if (!state.imageBase64) {
+      alert("Fotografía de respaldo pendiente. Tómala antes de analizar y guardar.");
+      return;
+    }
+    if (!state.audioBase64 && state.recordingPhase === "idle") {
+      alert("Para extraer información debes grabar el dictado del operador.");
+      return;
+    }
     if (state.recordingPhase !== "idle") {
       alert("Primero finaliza la grabación de voz y espera a que quede preparada.");
       return;
@@ -688,49 +749,68 @@
       return;
     }
 
-    showLoading("Analizando fotografía y voz con Gemini IA...");
+    showLoading("Transcribiendo la voz del operador...");
     dom.btnAnalyzeAI.disabled = true;
 
     try {
-      const payload = {
+      // Una sola grabación y un solo clic en Analizar.
+      // Etapa 1: audio -> transcripción. Etapa 2: transcripción -> campos.
+      // La foto solo se adjunta al guardar en Google Drive; NO se envía a Gemini.
+      // Cada llamada tiene su propio timeout de Netlify.
+      async function sendAnalysis(payload) {
+        const controller = new AbortController();
+        const requestTimer = setTimeout(() => controller.abort(), 28000);
+        let response;
+        try {
+          response = await fetch("/.netlify/functions/analyze-item", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+          });
+        } finally {
+          clearTimeout(requestTimer);
+        }
+        const textResponse = await response.text();
+        let result = null;
+        try { result = JSON.parse(textResponse); } catch (_) {}
+        if (!response.ok || !result || !result.success) {
+          if (response.status === 504 || response.status === 502) {
+            throw new Error("Gemini tardó demasiado (HTTP " + response.status + "). Intenta nuevamente.");
+          }
+          throw new Error(result?.error || "Error al analizar la prenda. HTTP " + response.status);
+        }
+        return result;
+      }
+
+      let transcripcion = "";
+      if (state.audioBase64) {
+        showLoading("Transcribiendo el dictado completo, incluidos códigos y precios...");
+        const voz = await sendAnalysis({
+          mode: "transcribe",
+          pin: state.pin,
+          audioBase64: state.audioBase64,
+          audioMimeType: state.audioMimeType,
+          operador: state.operator,
+          sucursal: state.branch
+        });
+        transcripcion = voz.transcripcionVoz || "";
+        if (!transcripcion.trim()) {
+          throw new Error("No se pudo transcribir el dictado. Revisa el audio grabado.");
+        }
+      }
+      showLoading("Completando campos desde el dictado...");
+      const data = await sendAnalysis({
+        mode: "extract",
         pin: state.pin,
-        imageBase64: state.imageBase64,
-        imageMimeType: state.imageMimeType,
-        audioBase64: state.audioBase64,
-        audioMimeType: state.audioMimeType,
+        transcripcionVoz: transcripcion,
         operador: state.operator,
         sucursal: state.branch
-      };
-
-      const controller = new AbortController();
-      const requestTimer = setTimeout(() => controller.abort(), 28000);
-      let res;
-      try {
-        res = await fetch("/.netlify/functions/analyze-item", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          signal: controller.signal
-        });
-      } finally {
-        clearTimeout(requestTimer);
-      }
-
-      // Netlify puede devolver una página HTML de error (por ejemplo un 504).
-      // No intentar interpretarla como JSON.
-      const rawResponse = await res.text();
-      let data = null;
-      try { data = JSON.parse(rawResponse); } catch (_) { /* respuesta no JSON */ }
-      if (!res.ok || !data || !data.success) {
-        if (res.status === 504 || res.status === 502) {
-          throw new Error("El servicio de análisis tardó demasiado (HTTP " + res.status + "). Puedes volver a intentarlo con un dictado más breve.");
-        }
-        throw new Error((data && data.error) || "No se recibió una respuesta válida del análisis. HTTP " + res.status);
-      }
+      });
 
       // Confirmar qué información de voz fue realmente entendida.
       if (state.audioBase64 && (!data.audioInterpretado || !data.transcripcionVoz)) {
-        throw new Error("El análisis visual funcionó, pero Gemini no confirmó la voz. Vuelve a grabar y escucha el audio antes de analizar.");
+        throw new Error("Gemini no confirmó la interpretación del audio. Escucha la grabación completa y vuelve a analizar.");
       }
       const completar = state.hasSuccessfulAnalysis;
       if (data.audioInterpretado) {
@@ -764,7 +844,7 @@
         ? "La solicitud tardó demasiado en responder. Puedes volver a intentarlo con un dictado más breve."
         : (err.message || "No se pudo completar el análisis.");
       alert(`⚠️ ${errorMessage}\n\nPuedes llenar los campos manualmente a continuación.`);
-      // En un fallo de audio no sustituir datos previos ni presentar la foto
+      // En un fallo de audio no sustituir datos previos ni presentar la transcripción
       // como si Gemini hubiese escuchado correctamente al operador.
       dom.voiceTranscriptBox.style.display = "none";
       if (dom.stepConfirmation.style.display !== "block") {
@@ -796,15 +876,18 @@
     textField(dom.itemPrecioVenta, item.precioVenta);
     const matches = [...dom.itemTalla.value.matchAll(/\b(XXL|XL|XS|S|M|L):(\d+)\b/g)];
     const sum = matches.reduce((n, pair) => n + Number(pair[2]), 0);
+    const declared = Number(item.cantidad);
+    // La cantidad explícitamente dictada nunca debe reemplazarse por
+    // una suma parcial cuando falta desglosar una talla (p. ej., XL).
+    const resolved = declared > 0 ? declared : (sum || 1);
     if (soloFaltantes) {
-      // Si antes no teníamos tallas y ahora se dictan cantidades por talla,
-      // sustituir el valor por defecto de cantidad 1 por la suma real.
-      if (!tallaAnterior && sum) dom.itemCantidad.value = String(sum);
-      else if ((!dom.itemCantidad.value || dom.itemCantidad.value === "1") && item.cantidad > 1) {
-        dom.itemCantidad.value = String(item.cantidad);
+      if (!tallaAnterior && (declared > 0 || sum)) {
+        dom.itemCantidad.value = String(resolved);
+      } else if ((!dom.itemCantidad.value || dom.itemCantidad.value === "1") && declared > 1) {
+        dom.itemCantidad.value = String(resolved);
       }
     } else {
-      dom.itemCantidad.value = String(sum || item.cantidad || 1);
+      dom.itemCantidad.value = String(resolved);
     }
   }
 
@@ -827,18 +910,16 @@
     // Varias tallas requieren desglose explícito; 3 prendas S/M/L no implican 1 de cada.
     const tallaValue = normalizeSizes(dom.itemTalla.value);
     dom.itemTalla.value = tallaValue;
-    const sizes = Array.from(new Set(tallaValue.match(/\b(?:XXL|XL|XS|S|M|L)\b/g) || []));
-    const combinedSingleSize = /^(?:XXL|XL|XS|S|M|L)\s*\/\s*(?:XXL|XL|XS|S|M|L)$/.test(tallaValue);
-    if (sizes.length > 1 && !combinedSingleSize) {
-      const pairs = [...tallaValue.matchAll(/\b(XXL|XL|XS|S|M|L)\s*[:=]\s*(\d+)\b/g)];
-      const quantityBySize = new Map(pairs.map(match => [match[1], Number(match[2])]));
-      const total = [...quantityBySize.values()].reduce((acc, qty) => acc + qty, 0);
-      if (quantityBySize.size !== sizes.length || total !== Number(dom.itemCantidad.value)) {
-        dom.saveErrorMsg.textContent = "Indica la cantidad por talla (ej.: S:1, M:1, L:1) y verifica que la suma coincida con la cantidad física. No se asignarán cantidades por suposición.";
-        dom.saveErrorMsg.style.display = "block";
-        dom.saveErrorMsg.scrollIntoView({ behavior: "smooth", block: "center" });
-        return;
-      }
+    const parsedSizes = parseInventorySizes(tallaValue);
+    if (parsedSizes.hasSizes &&
+        ((parsedSizes.missing.length > 0 && (parsedSizes.pairs.length > 0 || parsedSizes.missing.length > 1)) ||
+        (parsedSizes.pairs.length > 0 &&
+         parsedSizes.pairs.reduce((n, x) => n + x.quantity, 0) !== Number(dom.itemCantidad.value)))) {
+      dom.saveErrorMsg.textContent =
+        "Revisa las cantidades por talla. Usa S:1, M:2, etc. La suma debe coincidir con la cantidad física y no pueden quedar tallas sin cantidad.";
+      dom.saveErrorMsg.style.display = "block";
+      dom.saveErrorMsg.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
     }
 
     dom.saveErrorMsg.style.display = "none";
