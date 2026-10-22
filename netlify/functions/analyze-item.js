@@ -203,10 +203,10 @@ REGLAS ESTRICTAS DE CONFIANZA:
 6. Si menciona varias tallas (por ejemplo "S, M, L") y una cantidad total, NO infieras cuántas unidades hay por talla. Devuelve "S, M, L" en talla. Si dicta cantidades individuales como "S uno, M uno, L uno, XL uno" o "S1, M1, L1, XL1", normaliza SIEMPRE a "S:1, M:1, L:1, XL:1" en talla y usa la suma de unidades explícitas en cantidad.
 7. Prioriza el dato expresamente dictado sobre conjeturas visuales; no atribuyas composición textil precisa solo por apariencia.
 8. El código principal identifica al MODELO y se reutiliza entre distintos colores. Mantén el mismo código principal si cambia solamente el color; no generes códigos diferentes por color.
-9. PRIORIDAD CRÍTICA: si se adjunta audio, escúchalo y transcribe COMPLETA Y LITERALMENTE todas las palabras del operador en "transcripcionVoz", incluidos números, códigos, tallas y precios, antes de extraer campos. No inventes una transcripción ni utilices este prompt como fuente de voz. Si el audio no puede oírse o no contiene palabras inteligibles, devuelve "" en transcripcionVoz.
+9. Si se proporciona una TRANSCRIPCIÓN COMPLETA DEL OPERADOR en texto, úsala íntegramente como fuente prioritaria para códigos, tallas, cantidades y precios; no la resumas ni la descartes. Copia ese texto en "transcripcionVoz" como referencia. Si se adjunta audio en lugar de texto, transcríbelo completamente antes de extraer campos.
 10. Extrae código de proveedor, distribución por talla y precios del contenido realmente dictado. Un código como "3048" y un precio como "doce dólares" deben conservarse en sus respectivos campos. Si no aparecen en el audio o una etiqueta legible, déjalos vacíos.
 11. NO asumas "talla única" a partir de la fotografía. Solo escribe ÚNICA si se escuchó explícitamente "talla única" o aparece en una etiqueta legible. Diferencia entre cantidad total y cantidades por talla.
-12. Si el audio no fue adjuntado, transcripcionVoz debe ser "" y ningún campo debe atribuirse a una voz inexistente.
+12. Si no se adjunta audio ni transcripción, transcripcionVoz debe ser "" y no inventes valores de dictado. Si se aporta una transcripción textual, sí debes utilizarla como dictado del operador.
 
 Debes responder ÚNICAMENTE un JSON con esta estructura exacta:
 {
