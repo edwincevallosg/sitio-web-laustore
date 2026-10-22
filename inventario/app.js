@@ -678,7 +678,14 @@
   // 6. ANÁLISIS MULTIMODAL CON GEMINI API (NETLIFY FUNCTION)
   // =========================================================================
   async function onAnalyzeAIClick() {
-    if (!state.imageBase64) return;
+    if (!state.imageBase64) {
+      alert("Fotografía de respaldo pendiente. Tómala antes de analizar y guardar.");
+      return;
+    }
+    if (!state.audioBase64 && state.recordingPhase === "idle") {
+      alert("Para extraer información debes grabar el dictado del operador.");
+      return;
+    }
     if (state.recordingPhase !== "idle") {
       alert("Primero finaliza la grabación de voz y espera a que quede preparada.");
       return;
@@ -688,12 +695,13 @@
       return;
     }
 
-    showLoading("Analizando fotografía y voz con Gemini IA...");
+    showLoading("Transcribiendo la voz del operador...");
     dom.btnAnalyzeAI.disabled = true;
 
     try {
       // Una sola grabación y un solo clic en Analizar.
-      // Etapa 1: audio -> transcripción. Etapa 2: foto + texto -> campos.
+      // Etapa 1: audio -> transcripción. Etapa 2: transcripción -> campos.
+      // La foto solo se adjunta al guardar en Google Drive; NO se envía a Gemini.
       // Cada llamada tiene su propio timeout de Netlify.
       async function sendAnalysis(payload) {
         const controller = new AbortController();
@@ -737,12 +745,10 @@
           throw new Error("No se pudo transcribir el dictado. Revisa el audio grabado.");
         }
       }
-      showLoading("Completando el inventario con foto y dictado...");
+      showLoading("Completando campos desde el dictado...");
       const data = await sendAnalysis({
         mode: "extract",
         pin: state.pin,
-        imageBase64: state.imageBase64,
-        imageMimeType: state.imageMimeType,
         transcripcionVoz: transcripcion,
         operador: state.operator,
         sucursal: state.branch
@@ -750,7 +756,7 @@
 
       // Confirmar qué información de voz fue realmente entendida.
       if (state.audioBase64 && (!data.audioInterpretado || !data.transcripcionVoz)) {
-        throw new Error("El análisis visual funcionó, pero Gemini no confirmó la voz. Vuelve a grabar y escucha el audio antes de analizar.");
+        throw new Error("Gemini no confirmó la interpretación del audio. Escucha la grabación completa y vuelve a analizar.");
       }
       const completar = state.hasSuccessfulAnalysis;
       if (data.audioInterpretado) {
@@ -784,7 +790,7 @@
         ? "La solicitud tardó demasiado en responder. Puedes volver a intentarlo con un dictado más breve."
         : (err.message || "No se pudo completar el análisis.");
       alert(`⚠️ ${errorMessage}\n\nPuedes llenar los campos manualmente a continuación.`);
-      // En un fallo de audio no sustituir datos previos ni presentar la foto
+      // En un fallo de audio no sustituir datos previos ni presentar la transcripción
       // como si Gemini hubiese escuchado correctamente al operador.
       dom.voiceTranscriptBox.style.display = "none";
       if (dom.stepConfirmation.style.display !== "block") {
