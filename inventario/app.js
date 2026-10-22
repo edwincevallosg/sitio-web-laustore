@@ -692,41 +692,61 @@
     dom.btnAnalyzeAI.disabled = true;
 
     try {
-      const payload = {
+      // Una sola grabación y un solo clic en Analizar.
+      // Etapa 1: audio -> transcripción. Etapa 2: foto + texto -> campos.
+      // Cada llamada tiene su propio timeout de Netlify.
+      async function sendAnalysis(payload) {
+        const controller = new AbortController();
+        const requestTimer = setTimeout(() => controller.abort(), 28000);
+        let response;
+        try {
+          response = await fetch("/.netlify/functions/analyze-item", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+          });
+        } finally {
+          clearTimeout(requestTimer);
+        }
+        const textResponse = await response.text();
+        let result = null;
+        try { result = JSON.parse(textResponse); } catch (_) {}
+        if (!response.ok || !result || !result.success) {
+          if (response.status === 504 || response.status === 502) {
+            throw new Error("Gemini tardó demasiado (HTTP " + response.status + "). Intenta nuevamente.");
+          }
+          throw new Error(result?.error || "Error al analizar la prenda. HTTP " + response.status);
+        }
+        return result;
+      }
+
+      let transcripcion = "";
+      if (state.audioBase64) {
+        showLoading("Transcribiendo el dictado completo, incluidos códigos y precios...");
+        const voz = await sendAnalysis({
+          mode: "transcribe",
+          pin: state.pin,
+          audioBase64: state.audioBase64,
+          audioMimeType: state.audioMimeType,
+          operador: state.operator,
+          sucursal: state.branch
+        });
+        transcripcion = voz.transcripcionVoz || "";
+        if (!transcripcion.trim()) {
+          throw new Error("No se pudo transcribir el dictado. Revisa el audio grabado.");
+        }
+      }
+      showLoading("Completando el inventario con foto y dictado...");
+      const data = await sendAnalysis({
+        mode: "extract",
         pin: state.pin,
         imageBase64: state.imageBase64,
         imageMimeType: state.imageMimeType,
-        audioBase64: state.audioBase64,
-        audioMimeType: state.audioMimeType,
+        transcripcionVoz: transcripcion,
         operador: state.operator,
         sucursal: state.branch
-      };
-
-      const controller = new AbortController();
-      const requestTimer = setTimeout(() => controller.abort(), 28000);
-      let res;
-      try {
-        res = await fetch("/.netlify/functions/analyze-item", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          signal: controller.signal
-        });
-      } finally {
-        clearTimeout(requestTimer);
-      }
-
-      // Netlify puede devolver una página HTML de error (por ejemplo un 504).
-      // No intentar interpretarla como JSON.
-      const rawResponse = await res.text();
-      let data = null;
-      try { data = JSON.parse(rawResponse); } catch (_) { /* respuesta no JSON */ }
-      if (!res.ok || !data || !data.success) {
-        if (res.status === 504 || res.status === 502) {
-          throw new Error("El servicio de análisis tardó demasiado (HTTP " + res.status + "). Puedes volver a intentarlo con un dictado más breve.");
-        }
-        throw new Error((data && data.error) || "No se recibió una respuesta válida del análisis. HTTP " + res.status);
-      }
+      });
 
       // Confirmar qué información de voz fue realmente entendida.
       if (state.audioBase64 && (!data.audioInterpretado || !data.transcripcionVoz)) {
