@@ -822,15 +822,18 @@
     textField(dom.itemPrecioVenta, item.precioVenta);
     const matches = [...dom.itemTalla.value.matchAll(/\b(XXL|XL|XS|S|M|L):(\d+)\b/g)];
     const sum = matches.reduce((n, pair) => n + Number(pair[2]), 0);
+    const declared = Number(item.cantidad);
+    // La cantidad explícitamente dictada nunca debe reemplazarse por
+    // una suma parcial cuando falta desglosar una talla (p. ej., XL).
+    const resolved = declared > 0 ? declared : (sum || 1);
     if (soloFaltantes) {
-      // Si antes no teníamos tallas y ahora se dictan cantidades por talla,
-      // sustituir el valor por defecto de cantidad 1 por la suma real.
-      if (!tallaAnterior && sum) dom.itemCantidad.value = String(sum);
-      else if ((!dom.itemCantidad.value || dom.itemCantidad.value === "1") && item.cantidad > 1) {
-        dom.itemCantidad.value = String(item.cantidad);
+      if (!tallaAnterior && (declared > 0 || sum)) {
+        dom.itemCantidad.value = String(resolved);
+      } else if ((!dom.itemCantidad.value || dom.itemCantidad.value === "1") && declared > 1) {
+        dom.itemCantidad.value = String(resolved);
       }
     } else {
-      dom.itemCantidad.value = String(sum || item.cantidad || 1);
+      dom.itemCantidad.value = String(resolved);
     }
   }
 
