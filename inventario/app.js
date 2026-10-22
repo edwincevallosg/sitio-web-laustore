@@ -911,10 +911,10 @@ function parseInventorySizes(rawValue) {
     const tallaValue = normalizeSizes(dom.itemTalla.value);
     dom.itemTalla.value = tallaValue;
     const parsedSizes = parseInventorySizes(tallaValue);
-    if (parsedSizes.hasSizes && (parsedSizes.pairs.length || parsedSizes.missing.length) &&
-        (parsedSizes.missing.length && parsedSizes.pairs.length ||
-        parsedSizes.pairs.length > 0 &&
-        parsedSizes.pairs.reduce((n, x) => n + x.quantity, 0) !== Number(dom.itemCantidad.value))) {
+    if (parsedSizes.hasSizes &&
+        ((parsedSizes.missing.length > 0 && (parsedSizes.pairs.length > 0 || parsedSizes.missing.length > 1)) ||
+        (parsedSizes.pairs.length > 0 &&
+         parsedSizes.pairs.reduce((n, x) => n + x.quantity, 0) !== Number(dom.itemCantidad.value)))) {
       dom.saveErrorMsg.textContent =
         "Revisa las cantidades por talla. Usa S:1, M:2, etc. La suma debe coincidir con la cantidad física y no pueden quedar tallas sin cantidad.";
       dom.saveErrorMsg.style.display = "block";
