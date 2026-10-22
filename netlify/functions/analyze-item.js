@@ -80,8 +80,8 @@ exports.handler = async (event) => {
   }
 
   try {
-    const { pin, imageBase64, imageMimeType, audioBase64, audioMimeType, operador, sucursal, mode = "combined", transcripcionVoz = "" } = JSON.parse(event.body || "{}");
-    if (!["combined", "transcribe", "extract"].includes(mode)) {
+    const { pin, audioBase64, audioMimeType, operador, sucursal, mode, transcripcionVoz = "" } = JSON.parse(event.body || "{}");
+    if (!["transcribe", "extract"].includes(mode)) {
       return { statusCode: 400, headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ error: "Tipo de análisis desconocido." }) };
     }
@@ -96,13 +96,15 @@ exports.handler = async (event) => {
       };
     }
 
-    // 2. Validar que exista imagen
-    if (!imageBase64 && mode !== "transcribe") {
-      return {
-        statusCode: 400,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ error: "Es obligatorio capturar al menos una fotografía de la prenda." })
-      };
+    // La foto se conserva para Google Drive; nunca se envía a esta función.
+    // Gemini recibe únicamente audio, y luego texto transcrito.
+    if (mode === "transcribe" && !audioBase64) {
+      return { statusCode: 400, headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ error: "Graba una descripción de voz antes de analizar la prenda." }) };
+    }
+    if (mode === "extract" && !String(transcripcionVoz || "").trim()) {
+      return { statusCode: 400, headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ error: "No existe una transcripción para completar el inventario." }) };
     }
 
     // 3. Validar API Key de Gemini
@@ -118,20 +120,9 @@ exports.handler = async (event) => {
       };
     }
 
-    // 4. Preparar partes multimodales para Gemini
+    // 4. Gemini procesa únicamente audio o su transcripción, nunca fotografía.
     const parts = [];
-
-    // Primera etapa: SOLO audio para transcribir completo. Segunda: foto y texto.
-    if (mode !== "transcribe") {
-      const cleanImageBase64 = imageBase64.replace(/^data:[^,]+;base64,/i, "");
-      parts.push({ inline_data: {
-        mime_type: imageMimeType || "image/jpeg",
-        data: cleanImageBase64
-      } });
-    }
-
-    // Audio solo en la etapa de transcripción o el flujo anterior.
-    if (audioBase64 && mode !== "extract") {
+    if (mode === "transcribe") {
       const cleanAudioBase64 = audioBase64.replace(/^data:[^,]+;base64,/i, "");
       // Determinar tipo mime de audio limpio
       let audioMime = audioMimeType || "audio/mp4";
@@ -148,7 +139,7 @@ exports.handler = async (event) => {
 
     // Confirmar que el audio enviado por el iPhone contiene señal real.
     // No registrar contenido de audio ni información personal en logs.
-    if (audioBase64 && mode !== "extract" && (audioMimeType || "").startsWith("audio/wav")) {
+    if (mode === "transcribe" && (audioMimeType || "").startsWith("audio/wav")) {
       const wavBytes = Buffer.from(audioBase64.replace(/^data:[^,]+;base64,/i, ""), "base64");
       if (wavBytes.length < 32044 || wavBytes.toString("ascii", 0, 4) !== "RIFF" ||
           wavBytes.toString("ascii", 8, 12) !== "WAVE") {
@@ -175,8 +166,8 @@ exports.handler = async (event) => {
       }
     }
 
-    // No pedir a Gemini que interprete fotografía y transcriba simultáneamente.
-    // Una grabación, dos llamadas internas desde el mismo botón del portal.
+    // Una grabación del operador, dos etapas separadas.
+    // La foto NO participa en ninguna etapa y se guarda solo al confirmar.
     const promptText = mode === "transcribe" ? `
 Eres un transcriptor especializado en inventarios de moda en español ecuatoriano.
 Transcribe ÍNTEGRAMENTE todo el audio desde la primera hasta la última palabra,
@@ -188,44 +179,43 @@ Devuelve ÚNICAMENTE JSON: {"transcripcionVoz":"transcripción completa en orden
 ` : `
 
 Eres el asistente de levantamiento de inventario de LauStore, boutique de moda femenina en Quito, Ecuador.
-Tu tarea es analizar la fotografía de la prenda y los datos que dictó el operador (${operador || "operador"} en ${sucursal || "tienda"}), proporcionados en texto.
-Si recibes la transcripción, interprétala por completo sin omitir códigos, tallas ni precios.
+Tu ÚNICA fuente de información es la transcripción íntegra del audio dictado por el operador (${operador || "operador"} en ${sucursal || "tienda"}).
+No tienes fotografía y NO debes deducir nada por apariencia. Procesa toda la transcripción desde el principio hasta el final sin perder códigos, tallas ni precios.
 
-EL OPERADOR PUEDE HABER DICHO: cantidades, precios de compra, precios de venta, nombre del proveedor, código de etiqueta o características de la prenda.
-EN LA FOTOGRAFÍA PUEDES OBSERVAR: el tipo de prenda (blazer, blusa, vestido, falda, etc.), corte, colores principales, texturas visibles de tela y etiquetas colgantes o cosidas.
+EL OPERADOR PUEDE HABER DICHO: cantidades, precios de compra, precios de venta, nombre del proveedor, código de etiqueta, descripción o características de la prenda.
 
 REGLAS ESTRICTAS DE CONFIANZA:
-1. NO inventes información. Si no puedes determinar con certeza un dato a partir de la foto o el audio, debes dejarlo como cadena vacía ("") o null.
+1. NO inventes información. Si un dato no fue pronunciado con claridad por el operador, devuélvelo como cadena vacía ("") o null.
 2. Si se menciona una cantidad en el audio (ej: "tenemos 8 unidades"), pon ese número; de lo contrario, el valor por defecto es 1.
-3. Si se mencionan precios en dólares (ej: "costó 12 y se vende en 32"), pon los valores numéricos correspondientes; si no se dijeron ni aparecen claros en etiqueta, déjalos como null.
+3. Si se mencionan precios en dólares (ej: "costó 12 y se vende en 32"), pon los valores numéricos correspondientes; si no se dijeron, déjalos como null.
 4. Si el operador dicta un "código principal", consérvalo exactamente como texto en codigoPrincipal, incluidos los ceros iniciales; si no lo dicta, déjalo vacío para generación central.
 5. Si dicta "código de proveedor", consérvalo en codigoAuxiliar. No inventes separadores: si dice "20 25" y no es clara la escritura, conserva "20 25" para confirmación humana.
 6. Si menciona varias tallas (por ejemplo "S, M, L") y una cantidad total, NO infieras cuántas unidades hay por talla. Devuelve "S, M, L" en talla. Si dicta cantidades individuales como "S uno, M uno, L uno, XL uno" o "S1, M1, L1, XL1", normaliza SIEMPRE a "S:1, M:1, L:1, XL:1" en talla y usa la suma de unidades explícitas en cantidad.
-7. Prioriza el dato expresamente dictado sobre conjeturas visuales; no atribuyas composición textil precisa solo por apariencia.
+7. Utiliza únicamente el dictado: si el operador no menciona color, tela o descripción, déjalos vacíos. No infieras composiciones textiles.
 8. El código principal identifica al MODELO y se reutiliza entre distintos colores. Mantén el mismo código principal si cambia solamente el color; no generes códigos diferentes por color.
-9. Si se proporciona una TRANSCRIPCIÓN COMPLETA DEL OPERADOR en texto, úsala íntegramente como fuente prioritaria para códigos, tallas, cantidades y precios; no la resumas ni la descartes. Copia ese texto en "transcripcionVoz" como referencia. Si se adjunta audio en lugar de texto, transcríbelo completamente antes de extraer campos.
-10. Extrae código de proveedor, distribución por talla y precios del contenido realmente dictado. Un código como "3048" y un precio como "doce dólares" deben conservarse en sus respectivos campos. Si no aparecen en el audio o una etiqueta legible, déjalos vacíos.
-11. NO asumas "talla única" a partir de la fotografía. Solo escribe ÚNICA si se escuchó explícitamente "talla única" o aparece en una etiqueta legible. Diferencia entre cantidad total y cantidades por talla.
-12. Si no se adjunta audio ni transcripción, transcripcionVoz debe ser "" y no inventes valores de dictado. Si se aporta una transcripción textual, sí debes utilizarla como dictado del operador.
+9. Usa la TRANSCRIPCIÓN COMPLETA DEL OPERADOR como fuente exclusiva. No la resumas ni omitas el final. Cópiala en "transcripcionVoz" como referencia.
+10. Extrae código de proveedor, distribución por talla y precios solamente de la transcripción. Un código como "3048" y un precio como "doce dólares" deben conservarse. Si no aparecen, déjalos vacíos.
+11. NO asumas "talla única" ni distribución por tallas: solo escribe ÚNICA si se dictó explícitamente y distingue cantidad total de cantidades por talla.
+12. El texto transcrito es la única evidencia para completar los campos del registro. No introduzcas valores supuestos.
 
 Debes responder ÚNICAMENTE un JSON con esta estructura exacta:
 {
-  "transcripcionVoz": "palabras realmente escuchadas en el audio, o vacío si no hay audio o no se entiende",
+  "transcripcionVoz": "texto completo que recibió del dictado, sin omisiones",
   "codigoPrincipal": "código principal de tienda dicho por el operador, conservando ceros iniciales, o vacío",
-  "codigoAuxiliar": "código de proveedor visible en etiqueta o dicho en audio, o vacío",
+  "codigoAuxiliar": "código de proveedor dictado por el operador, o vacío",
   "proveedor": "nombre del proveedor si se identificó, o vacío",
   "cantidad": 1,
-  "descripcion": "nombre o descripción clara de la prenda (ej: Blazer entallado de corte sastre)",
+  "descripcion": "nombre o descripción dictada de la prenda (ej: Blazer entallado), o vacío",
   "talla": "distribución explícita S:1, M:1, L:1, XL:1 si se dictan unidades por talla; de otro modo tallas sueltas, o vacío",
-  "color": "color principal y variantes observadas (ej: Vino, Negro, Camel)",
-  "caracteristicas": "detalles como tipo de tela (Punto Roma, Seda, Cuerina, etc.), forro, botones o textura",
+  "color": "color o colores dictados por el operador (ej: Vino, Negro, Camel), o vacío",
+  "caracteristicas": "detalles dictados como tipo de tela, forro, botones o textura, o vacío",
   "precioCompra": null,
   "precioVenta": null
 }
 `;
 
-    if (mode === "extract" && transcripcionVoz) {
-      parts.push({ text: "TRANSCRIPCIÓN COMPLETA DEL OPERADOR (prioritaria para números y cantidades):\n" + String(transcripcionVoz).slice(0, 8000) });
+    if (mode === "extract") {
+      parts.push({ text: "TRANSCRIPCIÓN ÍNTEGRA DEL OPERADOR (única fuente para todos los campos):\n" + String(transcripcionVoz).slice(0, 16000) });
     }
     parts.push({ text: promptText });
 
@@ -313,13 +303,13 @@ Debes responder ÚNICAMENTE un JSON con esta estructura exacta:
     const transcript = mode === "extract" ? String(transcripcionVoz || "").trim()
       : (typeof parsedItem.transcripcionVoz === "string" ? parsedItem.transcripcionVoz.trim() : "");
 
-    // Un resultado visual no basta si el operador grabó voz.
-    if ((audioBase64 || (mode === "extract" && transcripcionVoz)) && !transcript) {
+    // Nunca aceptar un análisis sin transcripción válida.
+    if (!transcript) {
       return {
         statusCode: 422,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          error: "Gemini reconoció la fotografía, pero no logró interpretar la voz. Comprueba que puedas escuchar el audio y vuelve a analizar o grabar.",
+          error: "Gemini no pudo interpretar el dictado. Comprueba que el audio se escuche completo.",
           audioRecibido: true,
           audioInterpretado: false
         })
@@ -337,7 +327,7 @@ Debes responder ÚNICAMENTE un JSON con esta estructura exacta:
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         success: true,
-        audioRecibido: Boolean(audioBase64 || transcripcionVoz),
+        audioRecibido: Boolean(mode === "transcribe" ? audioBase64 : transcripcionVoz),
         audioInterpretado: Boolean(transcript),
         transcripcionVoz: transcript,
         item: parsedItem
