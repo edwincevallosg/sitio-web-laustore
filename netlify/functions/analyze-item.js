@@ -4,6 +4,61 @@
  * utilizando Google Gemini Multimodal para extraer datos estructurados de inventario.
  */
 
+
+function parseInventorySizes(rawValue) {
+  const source = String(rawValue == null ? "" : rawValue).trim();
+  if (!source) return { value: "", pairs: [], missing: [], hasSizes: false };
+  const text = source.toUpperCase().normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+
+  if (/^(?:TALLA\s+)?UNICA(?:\s*:\s*1)?$/.test(text)) {
+    return { value: "ÚNICA", pairs: [], missing: [], hasSizes: true };
+  }
+
+  const quantityWords = {
+    UN: 1, UNO: 1, UNA: 1, DOS: 2, TRES: 3, CUATRO: 4, CINCO: 5,
+    SEIS: 6, SIETE: 7, OCHO: 8, NUEVE: 9, DIEZ: 10, ONCE: 11,
+    DOCE: 12, TRECE: 13, CATORCE: 14, QUINCE: 15, DIECISEIS: 16,
+    DIECISIETE: 17, DIECIOCHO: 18, DIECINUEVE: 19, VEINTE: 20
+  };
+  const sizesOrder = ["XS", "S", "M", "L", "XL", "XXL", "XXXL"];
+  const sizePattern = "(XXXL|XXL|XL|XS|S|M|L)";
+  const numberPattern = "(\\d{1,3}|UN|UNO|UNA|DOS|TRES|CUATRO|CINCO|SEIS|SIETE|OCHO|NUEVE|DIEZ|ONCE|DOCE|TRECE|CATORCE|QUINCE|DIECISEIS|DIECISIETE|DIECIOCHO|DIECINUEVE|VEINTE)";
+  const quantity = token => {
+    if (/^\d+$/.test(token)) return Number(token);
+    return quantityWords[token] ?? null;
+  };
+  const resolved = new Map();
+  const spans = [];
+  const capture = (pattern, sizeIndex, countIndex, avoidOverlap) => {
+    for (const hit of text.matchAll(pattern)) {
+      const start = hit.index;
+      const stop = start + hit[0].length;
+      if (avoidOverlap && spans.some(s => start < s.end && stop > s.start)) continue;
+      const sz = hit[sizeIndex];
+      const count = quantity(hit[countIndex]);
+      if (count === null || count <= 0) continue;
+      if (!resolved.has(sz)) resolved.set(sz, count);
+      else if (resolved.get(sz) !== count) resolved.set(sz, null);
+      spans.push({ start, end: stop });
+    }
+  };
+  capture(new RegExp("\\b(?:TALLAS?\\s+)?"+sizePattern+"\\s*[:=\\-]?\\s*"+numberPattern+"\\b", "g"), 1, 2, false);
+  capture(new RegExp("\\b"+numberPattern+"\\s*(?:UNIDADES?\\s*(?:DE\\s+)?)?(?:TALLAS?\\s+)?"+sizePattern+"\\b", "g"), 2, 1, true);
+  const named = new Set(resolved.keys());
+  for (const hit of text.matchAll(/\b(XXXL|XXL|XL|XS|S|M|L)\b/g)) named.add(hit[1]);
+  const ordered = sizesOrder.filter(sz => named.has(sz));
+  if (!ordered.length) return { value: source, pairs: [], missing: [], hasSizes: false };
+
+  const pairs = ordered.filter(sz => resolved.get(sz) > 0)
+    .map(sz => ({ size: sz, quantity: resolved.get(sz) }));
+  const missing = ordered.filter(sz => !Number.isInteger(resolved.get(sz)) || resolved.get(sz) <= 0);
+  return {
+    value: ordered.map(sz => resolved.get(sz) > 0 ? sz + ":" + resolved.get(sz) : sz).join(", "),
+    pairs, missing, hasSizes: true
+  };
+}
+
 // Conciliación conservadora de la transcripción: no crea datos no pronunciados.
 function reconcileSpokenFields(item, transcript) {
   if (!transcript) return item;
@@ -40,28 +95,19 @@ function reconcileSpokenFields(item, transcript) {
   const aux = normalized.match(/\b(?:codigo\s+(?:(?:auxiliar|de[l]?\s+proveedor)|proveedor|del?\s+proveedor)|sku)\s*(?:numero\s+|es\s+|:?\s*)(\d[\d\s-]{0,14}\d|\d)\b/i);
   if (!item.codigoAuxiliar && aux) item.codigoAuxiliar = aux[1].trim();
 
-  const sizes = [];
-  const seen = new Set();
-  const sizesRegex = /\b(XXL|XL|XS|S|M|L)\s*[:=]?\s*(\d+|uno|una|un|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\b/gi;
-  for (const match of normalized.matchAll(sizesRegex)) {
-    const size = match[1].toUpperCase();
-    const qty = parseAmount(match[2]);
-    if (qty !== null && qty > 0 && !seen.has(size)) {
-      seen.add(size);
-      sizes.push({ size, qty });
-    }
-  }
-  if (sizes.length) {
-    // No perder tallas sin distribución, ni sobrescribir una cantidad total
-    // dictada con una suma parcial de tallas.
-    const sizesMentioned = [...normalized.matchAll(/\b(XXL|XL|XS|S|M|L)\b/gi)]
-      .map(x => x[1].toUpperCase());
-    const missingSizes = [...new Set(sizesMentioned)].filter(x => !seen.has(x));
-    item.talla = [...sizes.map(x => x.size + ":" + x.qty), ...missingSizes].join(", ");
+  // Normalizar tanto el texto dictado como la salida del modelo.
+  // El dictado conserva prioridad: no inventar cantidades faltantes.
+  const fromSpeech = parseInventorySizes(transcript);
+  const fromModel = parseInventorySizes(item.talla);
+  const parsed = fromSpeech.pairs.length ? fromSpeech : fromModel;
+  if (parsed.hasSizes) {
+    item.talla = parsed.value;
     const statedQuantity = normalized.match(/\b(?:cantidad(?:\s+fisica|\s+total)?|total(?:\s+de)?)\s*(?::|de|es)?\s*(\d+|uno|una|un|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\b/i);
     const explicitTotal = statedQuantity ? parseAmount(statedQuantity[1]) : null;
     if (explicitTotal !== null) item.cantidad = explicitTotal;
-    else if (!item.cantidad) item.cantidad = sizes.reduce((n, x) => n + x.qty, 0);
+    else if ((!item.cantidad || Number(item.cantidad) <= 0) && parsed.pairs.length && parsed.missing.length === 0) {
+      item.cantidad = parsed.pairs.reduce((n, x) => n + x.quantity, 0);
+    }
   }
   return item;
 }
