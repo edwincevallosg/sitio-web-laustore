@@ -669,9 +669,63 @@
     dom.btnAnalyzeAI.disabled = !state.imageBase64;
   }
 
+
+function parseInventorySizes(rawValue) {
+  const source = String(rawValue == null ? "" : rawValue).trim();
+  if (!source) return { value: "", pairs: [], missing: [], hasSizes: false };
+  const text = source.toUpperCase().normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+
+  if (/^(?:TALLA\s+)?UNICA(?:\s*:\s*1)?$/.test(text)) {
+    return { value: "ÚNICA", pairs: [], missing: [], hasSizes: true };
+  }
+
+  const quantityWords = {
+    UN: 1, UNO: 1, UNA: 1, DOS: 2, TRES: 3, CUATRO: 4, CINCO: 5,
+    SEIS: 6, SIETE: 7, OCHO: 8, NUEVE: 9, DIEZ: 10, ONCE: 11,
+    DOCE: 12, TRECE: 13, CATORCE: 14, QUINCE: 15, DIECISEIS: 16,
+    DIECISIETE: 17, DIECIOCHO: 18, DIECINUEVE: 19, VEINTE: 20
+  };
+  const sizesOrder = ["XS", "S", "M", "L", "XL", "XXL", "XXXL"];
+  const sizePattern = "(XXXL|XXL|XL|XS|S|M|L)";
+  const numberPattern = "(\\d{1,3}|UN|UNO|UNA|DOS|TRES|CUATRO|CINCO|SEIS|SIETE|OCHO|NUEVE|DIEZ|ONCE|DOCE|TRECE|CATORCE|QUINCE|DIECISEIS|DIECISIETE|DIECIOCHO|DIECINUEVE|VEINTE)";
+  const quantity = token => {
+    if (/^\d+$/.test(token)) return Number(token);
+    return quantityWords[token] ?? null;
+  };
+  const resolved = new Map();
+  const spans = [];
+  const capture = (pattern, sizeIndex, countIndex, avoidOverlap) => {
+    for (const hit of text.matchAll(pattern)) {
+      const start = hit.index;
+      const stop = start + hit[0].length;
+      if (avoidOverlap && spans.some(s => start < s.end && stop > s.start)) continue;
+      const sz = hit[sizeIndex];
+      const count = quantity(hit[countIndex]);
+      if (count === null || count <= 0) continue;
+      if (!resolved.has(sz)) resolved.set(sz, count);
+      else if (resolved.get(sz) !== count) resolved.set(sz, null);
+      spans.push({ start, end: stop });
+    }
+  };
+  capture(new RegExp("\\b(?:TALLAS?\\s+)?"+sizePattern+"\\s*[:=\\-]?\\s*"+numberPattern+"\\b", "g"), 1, 2, false);
+  capture(new RegExp("\\b"+numberPattern+"\\s*(?:UNIDADES?\\s*(?:DE\\s+)?)?(?:TALLAS?\\s+)?"+sizePattern+"\\b", "g"), 2, 1, true);
+  const named = new Set(resolved.keys());
+  for (const hit of text.matchAll(/\b(XXXL|XXL|XL|XS|S|M|L)\b/g)) named.add(hit[1]);
+  const ordered = sizesOrder.filter(sz => named.has(sz));
+  if (!ordered.length) return { value: source, pairs: [], missing: [], hasSizes: false };
+
+  const pairs = ordered.filter(sz => resolved.get(sz) > 0)
+    .map(sz => ({ size: sz, quantity: resolved.get(sz) }));
+  const missing = ordered.filter(sz => !Number.isInteger(resolved.get(sz)) || resolved.get(sz) <= 0);
+  return {
+    value: ordered.map(sz => resolved.get(sz) > 0 ? sz + ":" + resolved.get(sz) : sz).join(", "),
+    pairs, missing, hasSizes: true
+  };
+}
+
   function normalizeSizes(value) {
-    return String(value || "").toUpperCase().trim()
-      .replace(/\b(XXL|XL|XS|S|M|L)\s*[:=]?\s*(\d+)\b/g, "$1:$2");
+    return parseInventorySizes(value).value;
   }
 
   // =========================================================================
@@ -856,18 +910,16 @@
     // Varias tallas requieren desglose explícito; 3 prendas S/M/L no implican 1 de cada.
     const tallaValue = normalizeSizes(dom.itemTalla.value);
     dom.itemTalla.value = tallaValue;
-    const sizes = Array.from(new Set(tallaValue.match(/\b(?:XXL|XL|XS|S|M|L)\b/g) || []));
-    const combinedSingleSize = /^(?:XXL|XL|XS|S|M|L)\s*\/\s*(?:XXL|XL|XS|S|M|L)$/.test(tallaValue);
-    if (sizes.length > 1 && !combinedSingleSize) {
-      const pairs = [...tallaValue.matchAll(/\b(XXL|XL|XS|S|M|L)\s*[:=]\s*(\d+)\b/g)];
-      const quantityBySize = new Map(pairs.map(match => [match[1], Number(match[2])]));
-      const total = [...quantityBySize.values()].reduce((acc, qty) => acc + qty, 0);
-      if (quantityBySize.size !== sizes.length || total !== Number(dom.itemCantidad.value)) {
-        dom.saveErrorMsg.textContent = "Indica la cantidad por talla (ej.: S:1, M:1, L:1) y verifica que la suma coincida con la cantidad física. No se asignarán cantidades por suposición.";
-        dom.saveErrorMsg.style.display = "block";
-        dom.saveErrorMsg.scrollIntoView({ behavior: "smooth", block: "center" });
-        return;
-      }
+    const parsedSizes = parseInventorySizes(tallaValue);
+    if (parsedSizes.hasSizes && (parsedSizes.pairs.length || parsedSizes.missing.length) &&
+        (parsedSizes.missing.length && parsedSizes.pairs.length ||
+        parsedSizes.pairs.length > 0 &&
+        parsedSizes.pairs.reduce((n, x) => n + x.quantity, 0) !== Number(dom.itemCantidad.value))) {
+      dom.saveErrorMsg.textContent =
+        "Revisa las cantidades por talla. Usa S:1, M:2, etc. La suma debe coincidir con la cantidad física y no pueden quedar tallas sin cantidad.";
+      dom.saveErrorMsg.style.display = "block";
+      dom.saveErrorMsg.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
     }
 
     dom.saveErrorMsg.style.display = "none";
