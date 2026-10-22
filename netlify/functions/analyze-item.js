@@ -52,8 +52,16 @@ function reconcileSpokenFields(item, transcript) {
     }
   }
   if (sizes.length) {
-    item.talla = sizes.map(x => x.size + ":" + x.qty).join(", ");
-    item.cantidad = sizes.reduce((n, x) => n + x.qty, 0);
+    // No perder tallas sin distribución, ni sobrescribir una cantidad total
+    // dictada con una suma parcial de tallas.
+    const sizesMentioned = [...normalized.matchAll(/\b(XXL|XL|XS|S|M|L)\b/gi)]
+      .map(x => x[1].toUpperCase());
+    const missingSizes = [...new Set(sizesMentioned)].filter(x => !seen.has(x));
+    item.talla = [...sizes.map(x => x.size + ":" + x.qty), ...missingSizes].join(", ");
+    const statedQuantity = normalized.match(/\b(?:cantidad(?:\s+fisica|\s+total)?|total(?:\s+de)?)\s*(?::|de|es)?\s*(\d+|uno|una|un|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\b/i);
+    const explicitTotal = statedQuantity ? parseAmount(statedQuantity[1]) : null;
+    if (explicitTotal !== null) item.cantidad = explicitTotal;
+    else if (!item.cantidad) item.cantidad = sizes.reduce((n, x) => n + x.qty, 0);
   }
   return item;
 }
