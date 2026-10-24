@@ -39,3 +39,6 @@ Variable adicional: `GOOGLE_APPS_SCRIPT_MATRIZ_URL`.
 - El sistema no genera ni guarda imágenes o audio en Drive; la grabación permanece en memoria del móvil durante la sesión.
 - LockService y secuencia `MATRIZ_LAST_SEQUENCE` garantizan unicidad incluso con varios operadores.
 - La pestaña se creó sin filas de prueba ni modificaciones a las otras hojas.
+
+## Activación del entorno de prueba
+Se solicitó una nueva compilación de Deploy Preview #2 después de configurar `GOOGLE_APPS_SCRIPT_MATRIZ_URL` y `MATRIZ_API_SECRET` en Netlify. La rama permanece aislada de producción.
