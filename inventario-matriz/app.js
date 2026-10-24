@@ -167,9 +167,19 @@ $("analyzeButton").addEventListener("click",async ()=>{
     $("transcriptPanel").hidden=false;$("transcript").textContent=state.transcript;
     msg("analyzeStatus","Extrayendo los datos...");
     const p=await request("/.netlify/functions/analyze-matriz",{pin:state.pin,mode:"extract",transcripcion:state.transcript},28000);
+    if(!p.item || typeof p.item!=="object"){
+      throw Error("El análisis no devolvió campos válidos. Conservamos la transcripción para volver a intentar.");
+    }
     assign(p.item);
     state.requestId=getNewId();setSaved(false);
-    msg("analyzeStatus","Información interpretada. Revisa los campos antes de guardar.","good");
+    const missing=Array.isArray(p.missing)?p.missing:[];
+    const warnings=Array.isArray(p.warnings)?p.warnings:[];
+    if(missing.length || warnings.length){
+      const readable={nombreProducto:"Nombre del producto",categoria:"Categoría",costoReferencia:"Costo referencia",inventarioInicial:"Inventario inicial",precio1:"Precio 1"};
+      msg("analyzeStatus","Datos disponibles cargados. "+warnings.join(" ")+(missing.length?" Faltan: "+missing.map(k=>readable[k]||k).join(", ")+".":""),"note");
+    }else{
+      msg("analyzeStatus","Información cargada correctamente. Revisa los valores antes de guardar.","good");
+    }
     $("productForm").scrollIntoView({behavior:"smooth",block:"start"});
   }catch(err){msg("analyzeStatus",err.message,"error");}
   finally{setRecordingUI();}
