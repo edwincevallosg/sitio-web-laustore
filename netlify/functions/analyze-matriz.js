@@ -135,7 +135,7 @@ exports.handler = async (event) => {
       }
       parts = [
         {inline_data:{mime_type:type,data}},
-        {text:"Transcribe COMPLETAMENTE este dictado en español de Ecuador, del inicio al final, sin resumir. Conserva los números, valores decimales y el nombre largo del producto. No adivines lo inaudible, escribe [inaudible]. Devuelve SOLAMENTE JSON: {\"transcripcion\":\"texto íntegro\"}."}
+        {text:"Transcribe COMPLETAMENTE este dictado en español de Ecuador, del inicio al final, sin resumir. Conserva los números, valores decimales y el nombre largo del producto. Diferencia el número del campo del precio: si se dice 'precio uno treinta y cinco', escribe 'precio 1: 35', NO 'precio 135'. No adivines lo inaudible, escribe [inaudible]. Devuelve SOLAMENTE JSON: {\"transcripcion\":\"texto íntegro\"}."}
       ];
     } else {
       const transcript = String(v.transcripcion || "").trim().slice(0,14000);
